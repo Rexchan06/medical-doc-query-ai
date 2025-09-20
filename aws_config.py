@@ -43,7 +43,7 @@ class AWSConfigManager:
         """Initialize AWS configuration manager"""
         self.region_name = region_name
         self.services = {}
-        self.account_id = None
+        self.account_id = 154744860097
         self.cost_tracker = {
             'textract_pages': 0,
             'bedrock_tokens': 0,
@@ -384,7 +384,7 @@ class AWSUtilities:
                 Name=index_name,
                 Description=description,
                 RoleArn=f"arn:aws:iam::{self.aws_config.account_id}:role/KendraServiceRole",
-                Edition='ENTERPRISE_EDITION'
+                Edition='DEVELOPER_EDITION'
             )
             
             index_id = response['Id']
