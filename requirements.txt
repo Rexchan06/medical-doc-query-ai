@@ -20,7 +20,7 @@ chromadb>=0.4.0
 
 # ===== DOCUMENT PROCESSING =====
 # PDF processing
-pdf2image>=3.1.0
+pdf2image>=1.17.0
 PyPDF2>=3.0.0
 
 # Image processing
@@ -30,13 +30,8 @@ numpy>=1.24.0
 # ===== UTILITY LIBRARIES =====
 python-dotenv>=1.0.0
 pathlib
-hashlib
 logging
-json
 datetime
-collections
-typing
-re
 
 # ===== OPTIONAL PERFORMANCE ENHANCEMENTS =====
 # Faster vector operations (uncomment if needed)
