@@ -43,10 +43,13 @@ class AWSConfigManager:
         """Initialize AWS configuration manager"""
         self.region_name = region_name
         self.services = {}
+        self.account_id = None
         self.cost_tracker = {
             'textract_pages': 0,
             'bedrock_tokens': 0,
             'comprehend_requests': 0,
+            'kendra_queries': 0,
+            'kendra_documents': 0,
             'estimated_cost': 0.0
         }
         
@@ -65,6 +68,7 @@ class AWSConfigManager:
             self.services['textract'] = boto3.client('textract', region_name=self.region_name)
             self.services['bedrock'] = boto3.client('bedrock-runtime', region_name=self.region_name)
             self.services['comprehend_medical'] = boto3.client('comprehendmedical', region_name=self.region_name)
+            self.services['kendra'] = boto3.client('kendra', region_name=self.region_name)
             
             # Storage and processing
             self.services['s3'] = boto3.client('s3', region_name=self.region_name)
@@ -132,6 +136,15 @@ class AWSConfigManager:
             service_status['comprehend_medical'] = False
             logger.warning(f"⚠️ Comprehend Medical test failed: {e}")
         
+        # Test Kendra
+        try:
+            self.services['kendra'].list_indices()
+            service_status['kendra'] = True
+            logger.info("✅ Kendra connectivity confirmed")
+        except Exception as e:
+            service_status['kendra'] = False
+            logger.warning(f"⚠️ Kendra test failed: {e}")
+        
         # Log overall status
         working_services = sum(service_status.values())
         total_services = len(service_status)
@@ -153,6 +166,8 @@ class AWSConfigManager:
             'textract_page': 0.0015,
             'bedrock_1k_tokens': 0.00025,
             'comprehend_medical_request': 0.0001,
+            'kendra_query': 0.0003,
+            'kendra_document': 0.01,
             'translate_character': 0.000015,
             'polly_character': 0.000004
         }
@@ -356,6 +371,83 @@ class AWSUtilities:
         except Exception as e:
             self.logger.error(f"❌ Comprehend Medical call failed: {e}")
             return {'error': str(e), 'entities': [], 'phi': [], 'success': False}
+    
+    def safe_kendra_create_index(self, index_name: str, description: str = "Medical Document Index") -> Dict:
+        """
+        Create a Kendra index for medical documents
+        """
+        try:
+            kendra_client = self.aws_config.get_service_client('kendra')
+            
+            # Create index
+            response = kendra_client.create_index(
+                Name=index_name,
+                Description=description,
+                RoleArn=f"arn:aws:iam::{self.aws_config.account_id}:role/KendraServiceRole",
+                Edition='ENTERPRISE_EDITION'
+            )
+            
+            index_id = response['Id']
+            self.logger.info(f"✅ Kendra index created: {index_id}")
+            
+            return {'success': True, 'index_id': index_id}
+            
+        except Exception as e:
+            self.logger.error(f"❌ Kendra index creation failed: {e}")
+            return {'error': str(e), 'success': False}
+    
+    def safe_kendra_batch_put_document(self, index_id: str, documents: List[Dict]) -> Dict:
+        """
+        Upload documents to Kendra index
+        For use by Person 3 (Vector Search replacement)
+        """
+        try:
+            kendra_client = self.aws_config.get_service_client('kendra')
+            
+            response = kendra_client.batch_put_document(
+                IndexId=index_id,
+                Documents=documents
+            )
+            
+            # Track costs
+            self.aws_config.track_cost('kendra', 'document', len(documents))
+            
+            self.logger.info(f"✅ Kendra document upload successful: {len(documents)} documents")
+            return {'success': True, 'response': response}
+            
+        except Exception as e:
+            self.logger.error(f"❌ Kendra document upload failed: {e}")
+            return {'error': str(e), 'success': False}
+    
+    def safe_kendra_query(self, index_id: str, query_text: str, k: int = 10, 
+                         attribute_filter: Dict = None) -> Dict:
+        """
+        Query Kendra index for medical documents
+        For use by Person 3 (Vector Search replacement)
+        """
+        try:
+            kendra_client = self.aws_config.get_service_client('kendra')
+            
+            query_params = {
+                'IndexId': index_id,
+                'QueryText': query_text,
+                'PageSize': k
+            }
+            
+            if attribute_filter:
+                query_params['AttributeFilter'] = attribute_filter
+            
+            response = kendra_client.query(**query_params)
+            
+            # Track costs
+            self.aws_config.track_cost('kendra', 'query', 1)
+            
+            self.logger.info(f"✅ Kendra query successful: {len(response.get('ResultItems', []))} results")
+            return {'success': True, 'results': response}
+            
+        except Exception as e:
+            self.logger.error(f"❌ Kendra query failed: {e}")
+            return {'error': str(e), 'success': False}
 
 def setup_aws_environment() -> tuple[AWSConfigManager, AWSUtilities]:
     """
