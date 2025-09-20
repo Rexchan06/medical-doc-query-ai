@@ -32,12 +32,8 @@ except ImportError:
     print("❌ Error: aws_config.py not found. Make sure Person 1 has completed AWS setup.")
     exit(1)
 
-# Import Person 2's document processor
-try:
-    from document_processor import MedicalDocumentProcessor
-except ImportError:
-    print("❌ Error: document_processor.py not found. Make sure Person 2 has completed backend setup.")
-    exit(1)
+# Note: Document processor is imported by the medical_app.py coordinator
+# No direct import needed here to avoid circular dependencies
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)

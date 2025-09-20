@@ -928,19 +928,19 @@ def main():
     """
     Main function to launch the medical document application
     """
-    print("🚀 Starting Medical Document Query System...")
+    print("Starting Medical Document Query System...")
     print("=" * 60)
-    
+
     try:
         # Initialize the application
         app = MedicalDocumentApp()
-        
+
         # Create Gradio interface
         demo = create_gradio_interface(app)
-        
-        print("✅ Application initialized successfully!")
-        print("🌐 Launching web interface...")
-        print("📱 Access the application at the URL shown below")
+
+        print("Application initialized successfully!")
+        print("Launching web interface...")
+        print("Access the application at the URL shown below")
         
         # Launch the application
         demo.launch(
@@ -954,8 +954,8 @@ def main():
         )
         
     except Exception as e:
-        print(f"❌ Application startup failed: {e}")
-        print("\n🔧 Troubleshooting checklist:")
+        print(f"Application startup failed: {e}")
+        print("\nTroubleshooting checklist:")
         print("   1. All team components available (Persons 1-4)")
         print("   2. AWS credentials configured: aws configure")
         print("   3. Required Python packages installed")

@@ -32,12 +32,8 @@ except ImportError:
     print("❌ Error: aws_config.py not found. Make sure Person 1 has completed AWS setup.")
     exit(1)
 
-# Import Person 3's Vector Search
-try:
-    from vector_search import MedicalVectorSearch
-except ImportError:
-    print("❌ Error: vector_search.py not found. Make sure Person 3 has completed vector search setup.")
-    exit(1)
+# Note: Vector search is imported by the medical_app.py coordinator
+# No direct import needed here to avoid circular dependencies
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -54,7 +50,7 @@ class MedicalDocumentProcessor:
         logger.info("🔧 Initializing Medical Document Processor...")
         
         self.aws_config, self.aws_utils = setup_aws_environment()
-        self.vector_search = MedicalVectorSearch()
+        # Vector search will be injected by the medical_app coordinator
         
         self.processed_documents = {}
         
