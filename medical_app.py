@@ -121,8 +121,22 @@ class MedicalDocumentApp:
                 'user_message': 'Please upload a PDF file to analyze.'
             }
 
+        # Handle both Gradio file objects and file paths
+        if hasattr(pdf_file, 'name'):
+            # Gradio file object
+            pdf_path = pdf_file.name
+        else:
+            # Already a file path
+            pdf_path = str(pdf_file)
+
+        return self.process_document_complete_by_path(pdf_path, progress_callback)
+
+    def process_document_complete_by_path(self, pdf_path: str, progress_callback=None) -> Dict[str, Any]:
+        """
+        Process document using file path
+        """
         try:
-            filename = Path(pdf_file.name).name
+            filename = Path(pdf_path).name
             logger.info(f"🔄 Starting Nova Lite processing for: {filename}")
 
             if progress_callback:
@@ -130,7 +144,7 @@ class MedicalDocumentApp:
 
             # Step 1: Nova Lite document processing (text + vision combined)
             logger.info("🤖 Step 1: Processing with Nova Lite (text + vision analysis)...")
-            doc_result = self.document_processor.process_document_complete(pdf_file.name)
+            doc_result = self.document_processor.process_document_complete(pdf_path)
 
             if not doc_result['success']:
                 return {
@@ -152,7 +166,7 @@ class MedicalDocumentApp:
                 doc_result['medical_entities'],
                 [],  # No separate vision descriptions needed - already in extracted_text
                 doc_result['extraction_metadata'],
-                pdf_file.name  # Pass PDF file path for direct processing fallback
+                pdf_path  # Pass PDF file path for direct processing fallback
             )
 
             if not vector_success:
@@ -195,7 +209,178 @@ class MedicalDocumentApp:
                 'error': str(e),
                 'user_message': f"An error occurred during Nova Lite processing: {str(e)}"
             }
+
+    def process_multiple_documents(self, pdf_files, progress_callback=None) -> Dict[str, Any]:
+        """
+        Process multiple PDF documents with Nova Lite and create unified analysis
+        """
+        if pdf_files is None or len(pdf_files) == 0:
+            return {
+                'success': False,
+                'error': 'No files uploaded',
+                'user_message': 'Please upload at least one PDF file to analyze.'
+            }
+
+        try:
+            total_files = len(pdf_files)
+            all_results = []
+            failed_files = []
+
+            logger.info(f"🔄 Starting multi-document Nova Lite processing for {total_files} files")
+
+            # Process each document individually
+            for i, pdf_file in enumerate(pdf_files, 1):
+                filename = Path(pdf_file.name).name
+
+                if progress_callback:
+                    progress_callback(i / (total_files + 1), f"Processing file {i}/{total_files}: {filename}")
+
+                logger.info(f"📄 Processing document {i}/{total_files}: {filename}")
+
+                # Process individual document
+                # Extract file path from Gradio file object
+                file_path = pdf_file.name if hasattr(pdf_file, 'name') else str(pdf_file)
+                doc_result = self.process_document_complete_by_path(file_path)
+
+                if doc_result['success']:
+                    all_results.append(doc_result)
+                    logger.info(f"✅ Successfully processed: {filename}")
+                else:
+                    failed_files.append({'filename': filename, 'error': doc_result['error']})
+                    logger.warning(f"❌ Failed to process: {filename} - {doc_result['error']}")
+
+            if progress_callback:
+                progress_callback(0.95, "Generating cross-document analysis...")
+
+            # Create unified multi-document summary
+            if all_results:
+                unified_summary = self._create_multi_document_summary(all_results, failed_files)
+
+                # Update session stats
+                self.session_stats['documents_processed'] += len(all_results)
+
+                if progress_callback:
+                    progress_callback(1.0, f"Multi-document processing complete! Processed {len(all_results)}/{total_files} files")
+
+                return {
+                    'success': True,
+                    'total_files': total_files,
+                    'successful_files': len(all_results),
+                    'failed_files': len(failed_files),
+                    'individual_results': all_results,
+                    'failed_results': failed_files,
+                    'unified_summary': unified_summary,
+                    'processing_timestamp': datetime.now().isoformat()
+                }
+            else:
+                return {
+                    'success': False,
+                    'error': 'All documents failed to process',
+                    'user_message': f'Failed to process any of the {total_files} uploaded documents.',
+                    'failed_results': failed_files
+                }
+
+        except Exception as e:
+            logger.error(f"❌ Multi-document processing failed: {e}")
+            return {
+                'success': False,
+                'error': str(e),
+                'user_message': f"An error occurred during multi-document processing: {str(e)}"
+            }
     
+    def _create_multi_document_summary(self, all_results: List[Dict], failed_files: List[Dict]) -> str:
+        """
+        Create comprehensive cross-document analysis summary
+        """
+        summary_parts = []
+
+        # Header
+        summary_parts.append("# 🏥 MULTI-DOCUMENT MEDICAL ANALYSIS")
+        summary_parts.append(f"**Analysis Date:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        summary_parts.append(f"**Documents Processed:** {len(all_results)}")
+        if failed_files:
+            summary_parts.append(f"**Failed Documents:** {len(failed_files)}")
+        summary_parts.append(f"**Analysis Method:** Nova Lite AI (Combined Text + Vision)")
+        summary_parts.append("")
+
+        # Executive Summary
+        total_medications = sum(result.get('document_processing', {}).get('processing_summary', {}).get('medications_found', 0) for result in all_results)
+        total_conditions = sum(result.get('document_processing', {}).get('processing_summary', {}).get('conditions_found', 0) for result in all_results)
+        total_safety_alerts = sum(len(result.get('document_processing', {}).get('safety_alerts', [])) for result in all_results)
+        total_pages = sum(result.get('document_processing', {}).get('extraction_metadata', {}).get('pages_processed', 0) for result in all_results)
+
+        summary_parts.append("## 📊 CROSS-DOCUMENT EXECUTIVE SUMMARY")
+        summary_parts.append(f"• **Total Medications Identified:** {total_medications}")
+        summary_parts.append(f"• **Total Medical Conditions:** {total_conditions}")
+        summary_parts.append(f"• **Total Pages Analyzed:** {total_pages}")
+        summary_parts.append(f"• **Safety Alerts Generated:** {total_safety_alerts}")
+        summary_parts.append(f"• **Analysis Coverage:** {len(all_results)} patients/documents")
+        summary_parts.append("")
+
+        # Cross-Document Safety Analysis
+        all_safety_alerts = []
+        for result in all_results:
+            alerts = result.get('document_processing', {}).get('safety_alerts', [])
+            for alert in alerts:
+                alert['source_doc'] = result.get('filename', 'Unknown')
+                all_safety_alerts.append(alert)
+
+        if all_safety_alerts:
+            summary_parts.append("## 🚨 CRITICAL CROSS-DOCUMENT SAFETY ALERTS")
+            for i, alert in enumerate(all_safety_alerts, 1):
+                severity_emoji = "🚨" if alert['severity'] == 'HIGH' else "⚠️"
+                summary_parts.append(f"### {severity_emoji} Alert {i} - {alert['severity']} RISK (from {alert['source_doc']})")
+                summary_parts.append(f"**Interaction:** {alert['drug1']['name']} + {alert['drug2']['name']}")
+                summary_parts.append(f"**Risk:** {alert['risk_description']}")
+                summary_parts.append(f"**Action Required:** {alert['recommended_action']}")
+                summary_parts.append("")
+        else:
+            summary_parts.append("## ✅ CROSS-DOCUMENT SAFETY STATUS")
+            summary_parts.append("No drug interactions detected across all documents.")
+            summary_parts.append("")
+
+        # Individual Document Summaries
+        summary_parts.append("## 📋 INDIVIDUAL DOCUMENT SUMMARIES")
+        for i, result in enumerate(all_results, 1):
+            doc_processing = result.get('document_processing', {})
+            processing_summary = doc_processing.get('processing_summary', {})
+
+            summary_parts.append(f"### Document {i}: {result.get('filename', 'Unknown')}")
+            summary_parts.append(f"• **Medications:** {processing_summary.get('medications_found', 0)}")
+            summary_parts.append(f"• **Conditions:** {processing_summary.get('conditions_found', 0)}")
+            summary_parts.append(f"• **Safety Alerts:** {len(doc_processing.get('safety_alerts', []))}")
+
+            # Brief medical report excerpt
+            medical_report = doc_processing.get('medical_report', '')
+            if medical_report:
+                report_excerpt = medical_report[:300] + "..." if len(medical_report) > 300 else medical_report
+                summary_parts.append(f"• **Key Findings:** {report_excerpt}")
+            summary_parts.append("")
+
+        # Failed Files Summary
+        if failed_files:
+            summary_parts.append("## ❌ PROCESSING FAILURES")
+            for failed in failed_files:
+                summary_parts.append(f"• **{failed['filename']}:** {failed['error']}")
+            summary_parts.append("")
+
+        # Population Health Insights
+        if len(all_results) > 1:
+            summary_parts.append("## 🏥 POPULATION HEALTH INSIGHTS")
+            summary_parts.append("**Cross-Patient Analysis:**")
+            summary_parts.append(f"• Analyzed {len(all_results)} patient records")
+            summary_parts.append(f"• Average medications per patient: {total_medications / len(all_results):.1f}")
+            summary_parts.append(f"• Average conditions per patient: {total_conditions / len(all_results):.1f}")
+            if total_safety_alerts > 0:
+                summary_parts.append(f"• {(total_safety_alerts / len(all_results) * 100):.1f}% of patients have safety alerts")
+            summary_parts.append("")
+            summary_parts.append("**Recommended Actions:**")
+            summary_parts.append("• Review all safety alerts before prescribing")
+            summary_parts.append("• Consider cross-patient medication patterns")
+            summary_parts.append("• Monitor for population-level adverse events")
+
+        return "\n".join(summary_parts)
+
     def _create_nova_lite_summary(self, doc_result: Dict) -> str:
         """
         Create a comprehensive summary from Nova Lite analysis results
@@ -619,142 +804,99 @@ Provide a direct answer that references the specific information found in the do
 def create_gradio_interface(app: MedicalDocumentApp):
     """
     Create the complete Gradio interface
-    Professional medical document analysis system
+    Professional medical document analysis system with external CSS
     """
-    
-    # Custom CSS for professional appearance
-    custom_css = """
-    .gradio-container {
-        max-width: 1400px !important;
-        margin: auto;
-    }
-    
-    .title-container {
-        text-align: center;
-        background: linear-gradient(90deg, #2E86C1, #3498DB);
-        color: white;
-        padding: 2rem;
-        border-radius: 10px;
-        margin-bottom: 2rem;
-    }
-    
-    .stats-container {
-        background: #f8f9fa;
-        padding: 1rem;
-        border-radius: 8px;
-        border-left: 4px solid #2E86C1;
-    }
-    
-    .alert-container {
-        background: #fff3cd;
-        border: 1px solid #ffeaa7;
-        padding: 1rem;
-        border-radius: 8px;
-        margin: 1rem 0;
-    }
-    
-    .success-container {
-        background: #d4edda;
-        border: 1px solid #c3e6cb;
-        padding: 1rem;
-        border-radius: 8px;
-        margin: 1rem 0;
-    }
-    """
-    
+
+    # Load external CSS
+    try:
+        with open("style.css", "r") as f:
+            custom_css = f.read()
+    except FileNotFoundError:
+        # Fallback CSS if style.css is not found
+        custom_css = """
+        .gradio-container {
+            max-width: 1400px !important;
+            margin: auto;
+        }
+        """
+
     with gr.Blocks(
         title="🏥 Medical Document Query System",
-        theme=gr.themes.Soft(),
+        theme=gr.themes.Base(),
         css=custom_css
     ) as demo:
         
-        # Header
-        gr.Markdown(
-            """
-            <div class="title-container">
-                <h1>🏥 Intelligent Medical Document Query System</h1>
-                <p><strong>Powered by Amazon Nova Lite AI • Advanced Multimodal Document Analysis</strong></p>
-                <p>Transform medical PDFs into searchable intelligence • Nova Lite vision + text analysis • Drug interaction detection • Multi-document AI search with Kendra</p>
+        # Header with clean design
+        gr.HTML("""
+        <div class="header">
+            <div class="hero">
+                <h1>👨🏻‍⚕️ Doct.Bot 🧪</h1>
+                <div class="features">
+                    <div class="feature">📋 Multi-PDF Intelligence</div>
+                    <div class="feature">📊 Chart Analysis</div>
+                    <div class="feature">📁 Cross-Document Patterns</div>
+                    <div class="feature">🚨 Safety Alerts</div>
+                </div>
             </div>
-            """,
-            elem_classes=["title-container"]
-        )
+        </div>
+        """)
         
         with gr.Tab("📄 Document Analysis & Query") as main_tab:
-            gr.Markdown("""
-            ### 🎯 Upload Medical Documents and Ask Intelligent Questions
-
-            **Nova Lite AI System Capabilities:**
-            • **Advanced AI Processing**: Use Amazon Nova Lite for both text extraction and visual analysis
-            • **Smart Document Understanding**: Analyze both digital and scanned medical PDFs with vision AI
-            • **Medical Intelligence**: Extract medications, conditions, and lab results with AI reasoning
-            • **Safety Analysis**: Detect drug interactions and generate safety alerts
-            • **Multi-Document Search**: Search and compare insights across multiple documents using Kendra
-            • **Intelligent Responses**: Get comprehensive answers powered by Nova Lite AI
-            """)
-            
-            with gr.Row():
-                with gr.Column(scale=1):
-                    # File upload
-                    pdf_input = gr.File(
-                        file_types=[".pdf"],
-                        label="📁 Upload Medical PDF Document",
-                        height=120
-                    )
-                    
-                    # Processing button
-                    process_btn = gr.Button(
-                        "🤖 Process with Nova Lite AI",
-                        variant="primary",
-                        size="lg"
-                    )
-                    
-                    # Query section
-                    gr.Markdown("### ❓ Ask Questions About Your Documents")
-                    
-                    question_input = gr.Textbox(
-                        label="Enter your medical question",
-                        placeholder="e.g., 'What medications show the best outcomes?' or 'Compare patient symptoms across all documents'",
-                        lines=3,
-                        max_lines=5
-                    )
-                    
-                    with gr.Row():
-                        k_slider = gr.Slider(
-                            minimum=3,
-                            maximum=15,
-                            value=7,
-                            step=1,
-                            label="🎯 Search depth (sections to analyze)"
-                        )
-                        
-                        pattern_analysis_checkbox = gr.Checkbox(
-                            label="📊 Enable cross-document pattern analysis",
-                            value=True
-                        )
-                    
-                    query_btn = gr.Button(
-                        "🔍 Search & Analyze",
-                        variant="secondary",
-                        size="lg"
-                    )
-                
-                with gr.Column(scale=2):
-                    # Results display
-                    results_output = gr.Textbox(
-                        label="📋 Analysis Results",
-                        lines=25,
-                        max_lines=40,
-                        show_copy_button=True,
-                        placeholder="Upload a document and ask questions to see intelligent analysis results here..."
-                    )
-            
-            # Processing status
+            # Results display first (like myDemo.py)
+            results_output = gr.Markdown(
+                value="Ready to analyze your medical documents! Upload PDFs and start asking questions.",
+                label="Multi-Document Analysis Results",
+                elem_id="results_output"
+            )
             processing_status = gr.Textbox(
-                label="⚙️ Processing Status",
+                label="Processing Status",
                 lines=2,
                 visible=False
             )
+
+            gr.HTML('<div class="section-header"><h3>🎯 Upload & Process Medical Documents</h3></div>')
+            
+            with gr.Row():
+                with gr.Column(scale=1):
+                    pdf_input = gr.File(
+                        file_types=[".pdf"],
+                        file_count="multiple",
+                        label="📁 Upload Medical PDF Documents",
+                        height=140
+                    )
+                    process_btn = gr.Button(
+                        "📂 Process Documents",
+                        variant="primary",
+                        size="lg"
+                    )
+
+                with gr.Column(scale=1):
+                    question_input = gr.Textbox(
+                        label="Enter your medical question",
+                        placeholder="e.g., 'What medications show the best outcomes?' or 'Compare patient symptoms across all documents'",
+                        lines=4
+                    )
+                    query_btn = gr.Button(
+                        "🚀 Search & Analyze",
+                        variant="primary",
+                        size="lg"
+                    )
+
+            # Advanced options
+            with gr.Row():
+                with gr.Column():
+                    k_slider = gr.Slider(
+                        minimum=3,
+                        maximum=15,
+                        value=7,
+                        step=1,
+                        label="🎯 Search depth (sections to analyze)"
+                    )
+                with gr.Column():
+                    pattern_analysis_checkbox = gr.Checkbox(
+                        label="📊 Enable cross-document pattern analysis",
+                        value=True
+                    )
         
         with gr.Tab("📊 System Dashboard") as dashboard_tab:
             gr.Markdown("### 🔧 System Health & Performance Monitoring")
@@ -888,29 +1030,43 @@ def create_gradio_interface(app: MedicalDocumentApp):
             """)
         
         # Event handlers
-        def process_document_with_progress(pdf_file):
-            if pdf_file is None:
-                return "❌ Please upload a PDF file first.", ""
-            
+        def process_documents_with_progress(pdf_files):
+            if pdf_files is None or len(pdf_files) == 0:
+                return "❌ Please upload at least one PDF file first.", ""
+
             try:
                 # Show processing status
                 processing_status.visible = True
-                
+
                 def progress_callback(progress, message):
                     return f"⚙️ Processing... {int(progress*100)}% - {message}"
-                
-                # Process document
-                result = app.process_document_complete(pdf_file, progress_callback)
-                
-                if result['success']:
-                    summary = result['comprehensive_summary']
-                    status_msg = f"✅ Successfully processed: {result['filename']}"
+
+                # Handle single or multiple files
+                if len(pdf_files) == 1:
+                    # Single file processing (backward compatibility)
+                    result = app.process_document_complete(pdf_files[0], progress_callback)
+
+                    if result['success']:
+                        summary = result['comprehensive_summary']
+                        status_msg = f"✅ Successfully processed: {result['filename']}"
+                    else:
+                        summary = f"❌ Processing failed: {result.get('user_message', result.get('error', 'Unknown error'))}"
+                        status_msg = "❌ Processing failed"
                 else:
-                    summary = f"❌ Processing failed: {result.get('user_message', result.get('error', 'Unknown error'))}"
-                    status_msg = "❌ Processing failed"
-                
+                    # Multiple files processing
+                    result = app.process_multiple_documents(pdf_files, progress_callback)
+
+                    if result['success']:
+                        summary = result['unified_summary']
+                        status_msg = f"✅ Successfully processed {result['successful_files']}/{result['total_files']} documents"
+                        if result['failed_files'] > 0:
+                            status_msg += f" ({result['failed_files']} failed)"
+                    else:
+                        summary = f"❌ Multi-document processing failed: {result.get('user_message', result.get('error', 'Unknown error'))}"
+                        status_msg = "❌ Multi-document processing failed"
+
                 return summary, status_msg
-                
+
             except Exception as e:
                 error_msg = f"❌ An error occurred: {str(e)}"
                 return error_msg, error_msg
@@ -953,7 +1109,7 @@ def create_gradio_interface(app: MedicalDocumentApp):
         
         # Wire up event handlers
         process_btn.click(
-            fn=process_document_with_progress,
+            fn=process_documents_with_progress,
             inputs=[pdf_input],
             outputs=[results_output, processing_status]
         )
@@ -995,14 +1151,16 @@ def create_gradio_interface(app: MedicalDocumentApp):
             outputs=[question_input]
         )
         
-        # Example interactions
+        # Example interactions for multi-document analysis
         gr.Examples(
             examples=[
-                [None, "What medications are prescribed in this document?", 5, True],
-                [None, "Compare symptoms and outcomes across all patients", 8, True],
+                [None, "What medications are prescribed across all documents?", 5, True],
+                [None, "Compare symptoms and outcomes between patients", 8, True],
                 [None, "What safety alerts or drug interactions are present?", 6, False],
                 [None, "Analyze trends shown in any medical charts or graphs", 7, True],
-                [None, "What follow-up care recommendations are mentioned?", 5, False]
+                [None, "What follow-up care recommendations are mentioned?", 5, False],
+                [None, "Which patients have the highest medication compliance?", 6, True],
+                [None, "Identify common conditions across multiple patients", 7, True]
             ],
             inputs=[pdf_input, question_input, k_slider, pattern_analysis_checkbox]
         )
@@ -1031,7 +1189,7 @@ def main():
         demo.launch(
             share=True,              # Create shareable public URL for demo
             server_name="0.0.0.0",   # Allow external access
-            server_port=7863,        # Alternative port
+            server_port=7864,        # Alternative port (changed from 7863)
             show_error=True,         # Show detailed errors
             favicon_path=None,       # Custom favicon (optional)
             ssl_verify=False         # For development
