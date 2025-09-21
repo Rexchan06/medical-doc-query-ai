@@ -206,7 +206,7 @@ class MedicalVisionProcessor:
             vision_prompt = self._create_vision_prompt(page_number)
 
             # Analyze with Claude Vision
-            vision_response = self.aws_utils.safe_bedrock_vision_call(
+            vision_response = self.aws_utils.NWsafe_bedrock_vision_call(
                 image_b64,
                 vision_prompt
             )

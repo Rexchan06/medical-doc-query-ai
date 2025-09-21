@@ -403,14 +403,14 @@ Format your response professionally and cite specific information from the sourc
             response_parts.append("## 📋 ANSWER")
             response_parts.append(ai_response)
 
-            # Add source information
-            unique_docs = set(result['doc_id'] for result in search_results)
+            # Add source information (ensure doc_ids are strings for set compatibility)
+            unique_docs = set(str(result['doc_id']) for result in search_results if result.get('doc_id'))
             response_parts.append(f"\n## 📄 SOURCES")
             response_parts.append(f"• **Documents searched:** {len(unique_docs)}")
             response_parts.append(f"• **Relevant sections found:** {len(search_results)}")
 
-            # Document list
-            doc_files = set(result['filename'] for result in search_results)
+            # Document list (ensure filenames are strings)
+            doc_files = set(str(result['filename']) for result in search_results if result.get('filename'))
             response_parts.append(f"• **Source files:** {', '.join(doc_files)}")
 
             final_response = "\n".join(response_parts)

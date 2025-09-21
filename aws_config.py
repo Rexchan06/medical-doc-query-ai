@@ -71,12 +71,17 @@ class AWSConfigManager:
         try:
             logger.info("🔧 Initializing AWS services for Nova Lite + Kendra...")
 
-            # Core AI services (simplified)
-            self.services['bedrock'] = boto3.client('bedrock-runtime', region_name=self.region_name)
+            # Bedrock (Nova Lite) - Must be in US region
+            bedrock_region = 'us-east-1'  # Bedrock only available in US regions
+            self.services['bedrock'] = boto3.client('bedrock-runtime', region_name=bedrock_region)
+
+            # Kendra - Use configured region (ap-southeast-1)
             self.services['kendra'] = boto3.client('kendra', region_name=self.region_name)
 
-            # Storage (optional)
+            # S3 - Use configured region
             self.services['s3'] = boto3.client('s3', region_name=self.region_name)
+
+            logger.info(f"✅ Bedrock in {bedrock_region}, Kendra/S3 in {self.region_name}")
 
             logger.info("✅ Nova Lite + Kendra services initialized successfully")
             
@@ -350,8 +355,9 @@ def setup_aws_environment() -> tuple[AWSConfigManager, AWSUtilities]:
     Call this once at the start of your application
     """
     try:
-        # Initialize AWS configuration
-        aws_config = AWSConfigManager()
+        # Initialize AWS configuration with region from environment
+        region = os.environ.get('AWS_DEFAULT_REGION', 'us-east-1')
+        aws_config = AWSConfigManager(region_name=region)
         
         # Create utilities
         aws_utils = AWSUtilities(aws_config)
