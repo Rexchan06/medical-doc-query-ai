@@ -98,7 +98,7 @@ class MedicalDocumentProcessor:
 
             # Step 4: Generate medical report
             medical_report = self.generate_medical_report(
-                extracted_text, medical_entities, safety_alerts
+                extracted_text, medical_entities
             )
 
             # Create processing summary for response
@@ -212,15 +212,54 @@ Provide a comprehensive analysis that captures both text content and visual info
     
     def _extract_table_content(self, table_block: Dict, all_blocks: List[Dict]) -> str:
         """
-        Extract table content from Textract response
-        Simplified for hackathon - can be enhanced
+        Extract table content from Textract response.
+        Returns a simple text representation of the table.
         """
         try:
-            # For hackathon simplicity, return placeholder
-            # In production, would parse table relationships properly
-            return "[Structured table data - cells and relationships preserved]"
-        except Exception:
+            # Build a map of block Ids to blocks for quick lookup
+            block_map = {block['Id']: block for block in all_blocks}
+            rows = []
+
+            # Find all cell blocks that belong to this table
+            cell_blocks = [
+                block for block in all_blocks
+                if block['BlockType'] == 'CELL' and
+                'Relationships' in table_block and
+                any(rel['Type'] == 'CHILD' and block['Id'] in rel.get('Ids', []) for rel in table_block['Relationships'])
+            ]
+
+            # Organize cells by row and column
+            table = {}
+            max_row = 0
+            max_col = 0
+            for cell in cell_blocks:
+                row_idx = cell['RowIndex']
+                col_idx = cell['ColumnIndex']
+                max_row = max(max_row, row_idx)
+                max_col = max(max_col, col_idx)
+                # Get cell text
+                cell_text = ""
+                if 'Relationships' in cell:
+                    for rel in cell['Relationships']:
+                        if rel['Type'] == 'CHILD':
+                            for cid in rel['Ids']:
+                                word_block = block_map.get(cid)
+                                if word_block and word_block['BlockType'] == 'WORD':
+                                    cell_text += word_block['Text'] + " "
+                table[(row_idx, col_idx)] = cell_text.strip()
+
+            # Build table as text
+            for row in range(1, max_row + 1):
+                row_cells = []
+                for col in range(1, max_col + 1):
+                    row_cells.append(table.get((row, col), ""))
+                rows.append(" | ".join(row_cells))
+
+            return "\n".join(rows) if rows else "[Empty table]"
+        except Exception as e:
+            logger.error(f"Table extraction failed: {e}")
             return "[Table detected but content extraction failed]"
+    
     
     def extract_medical_entities(self, text: str) -> Dict:
         """
@@ -427,34 +466,8 @@ Format your response as a structured list under each category."""
         except Exception:
             return "Dosage not specified"
     
-    def _check_drug_class_interactions(self, med1: str, med2: str) -> Optional[Dict]:
-        """
-        Check for drug class interactions (simplified for hackathon)
-        Can be expanded with comprehensive drug interaction database
-        """
-        
-        # Blood thinners interaction
-        blood_thinners = ['warfarin', 'heparin', 'aspirin', 'clopidogrel']
-        if any(bt in med1 for bt in blood_thinners) and any(bt in med2 for bt in blood_thinners):
-            return {
-                'severity': 'HIGH',
-                'risk': 'Increased bleeding risk from multiple anticoagulants',
-                'action': 'Review anticoagulation strategy, monitor bleeding parameters'
-            }
-        
-        # Diabetes medications
-        diabetes_meds = ['metformin', 'insulin', 'glipizide', 'glyburide']
-        if any(dm in med1 for dm in diabetes_meds) and any(dm in med2 for dm in diabetes_meds):
-            return {
-                'severity': 'MEDIUM',
-                'risk': 'Potential hypoglycemia from multiple diabetes medications',
-                'action': 'Monitor blood glucose levels closely'
-            }
-        
-        return None
     
-    def generate_medical_report(self, extracted_text: str, medical_entities: Dict, 
-                              safety_alerts: List[Dict]) -> str:
+    def generate_medical_report(self, extracted_text: str, medical_entities: Dict) -> str:
         """
         Generate comprehensive medical report
         This impresses judges with professional medical analysis
@@ -470,12 +483,10 @@ Format your response as a structured list under each category."""
         # Executive Summary
         medications_count = len(medical_entities.get('medications', []))
         conditions_count = len(medical_entities.get('conditions', []))
-        alerts_count = len(safety_alerts)
         
         report_sections.append("## 📊 EXECUTIVE SUMMARY")
         report_sections.append(f"• **Medications Identified:** {medications_count}")
         report_sections.append(f"• **Medical Conditions:** {conditions_count}")
-        report_sections.append(f"• **Safety Alerts:** {alerts_count}")
         report_sections.append("")
         # ... (rest of the report generation)
 
