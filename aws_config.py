@@ -126,9 +126,8 @@ class AWSConfigManager:
             response = self.services['bedrock'].invoke_model(
                 modelId='amazon.nova-lite-v1:0',
                 body=json.dumps({
-                    'max_tokens': 10,
                     'messages': [{'role': 'user', 'content': [{'type': 'text', 'text': 'test'}]}],
-                    'inferenceConfig': {'temperature': 0.1}
+                    'inferenceConfig': {'temperature': 0.1, 'maxTokens': 10}
                 })
             )
             service_status['bedrock'] = True
@@ -278,9 +277,8 @@ class AWSUtilities:
 
             # Prepare request for Nova Lite format
             request_body = {
-                'max_tokens': max_tokens,
                 'messages': [{'role': 'user', 'content': [{'type': 'text', 'text': prompt}]}],
-                'inferenceConfig': {'temperature': 0.1}
+                'inferenceConfig': {'temperature': 0.1, 'maxTokens': max_tokens}
             }
 
             # Make API call
@@ -313,7 +311,6 @@ class AWSUtilities:
             bedrock_client = self.aws_config.get_service_client('bedrock')
 
             request_body = {
-                'max_tokens': 400,
                 'messages': [{
                     'role': 'user',
                     'content': [
@@ -325,7 +322,7 @@ class AWSUtilities:
                         }
                     ]
                 }],
-                'inferenceConfig': {'temperature': 0.1}
+                'inferenceConfig': {'temperature': 0.1, 'maxTokens': 400}
             }
 
             response = bedrock_client.invoke_model(

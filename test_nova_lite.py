@@ -25,9 +25,8 @@ def test_nova_lite():
         bedrock_client = aws_config.get_service_client('bedrock')
 
         request_body = {
-            'max_tokens': 100,
             'messages': [{'role': 'user', 'content': [{'type': 'text', 'text': 'Hello, are you Nova Lite?'}]}],
-            'inferenceConfig': {'temperature': 0.1}
+            'inferenceConfig': {'temperature': 0.1, 'maxTokens': 100}
         }
 
         response = bedrock_client.invoke_model(
