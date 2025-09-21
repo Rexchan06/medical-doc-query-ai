@@ -26,6 +26,15 @@ from datetime import datetime
 import os
 from botocore.exceptions import ClientError, NoCredentialsError
 
+# Load environment variables from .env file
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+    print("✅ .env file loaded successfully")
+except ImportError:
+    print("⚠️ python-dotenv not installed. Install with: pip install python-dotenv")
+    print("📝 Alternatively, set environment variables manually")
+
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,

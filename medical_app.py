@@ -112,8 +112,8 @@ class MedicalDocumentApp:
     
     def process_document_complete(self, pdf_file, progress_callback=None) -> Dict[str, Any]:
         """
-        Complete document processing pipeline
-        Integrates all team components for comprehensive analysis
+        Simplified document processing pipeline using Nova Lite
+        PDF → Nova Lite (text + vision) → Kendra storage → Results
         """
         if pdf_file is None:
             return {
@@ -121,91 +121,136 @@ class MedicalDocumentApp:
                 'error': 'No file uploaded',
                 'user_message': 'Please upload a PDF file to analyze.'
             }
-        
+
         try:
             filename = Path(pdf_file.name).name
-            logger.info(f"🔄 Starting complete processing for: {filename}")
-            
+            logger.info(f"🔄 Starting Nova Lite processing for: {filename}")
+
             if progress_callback:
-                progress_callback(0.1, "Starting document processing...")
-            
-            # Step 1: Person 2 - Basic document processing
-            logger.info("📄 Step 1: Extracting text and medical entities...")
+                progress_callback(0.1, "Starting Nova Lite document analysis...")
+
+            # Step 1: Nova Lite document processing (text + vision combined)
+            logger.info("🤖 Step 1: Processing with Nova Lite (text + vision analysis)...")
             doc_result = self.document_processor.process_document_complete(pdf_file.name)
-            
+
             if not doc_result['success']:
                 return {
                     'success': False,
                     'error': doc_result['error'],
-                    'user_message': f"Failed to process document: {doc_result['error']}"
+                    'user_message': f"Nova Lite processing failed: {doc_result['error']}"
                 }
-            
+
             if progress_callback:
-                progress_callback(0.3, "Text extraction complete. Analyzing images...")
-            
-            # Step 2: Person 4 - Vision processing
-            logger.info("👁️ Step 2: Processing visual content...")
-            vision_results = self.vision_processor.process_document_vision(pdf_file.name)
-            
-            # Create vision descriptions for vector search
-            vision_descriptions = self.vision_processor.create_vision_description_for_vector_search(vision_results)
-            
-            if progress_callback:
-                progress_callback(0.6, "Visual analysis complete. Building search index...")
-            
-            # Step 3: Person 3 - Vector storage
-            logger.info("🗄️ Step 3: Storing in vector database...")
+                progress_callback(0.6, "Nova Lite analysis complete. Storing in Kendra...")
+
+            # Step 2: Store in Kendra vector database
+            logger.info("🗄️ Step 2: Storing in Kendra vector database...")
+
+            # The extracted_text from Nova Lite already includes vision analysis
             vector_success = self.vector_search.store_document_vectors(
                 doc_result['doc_id'],
-                doc_result['extracted_text'],
+                doc_result['extracted_text'],  # This includes both text and vision analysis
                 doc_result['medical_entities'],
-                vision_descriptions,
+                [],  # No separate vision descriptions needed - already in extracted_text
                 doc_result['extraction_metadata']
             )
-            
+
             if not vector_success:
-                logger.warning("⚠️ Vector storage failed, but continuing with basic functionality")
-            
+                logger.warning("⚠️ Kendra storage failed, but continuing with basic functionality")
+
             if progress_callback:
-                progress_callback(0.9, "Finalizing analysis...")
-            
-            # Compile comprehensive results
+                progress_callback(0.9, "Finalizing results...")
+
+            # Create comprehensive summary
+            comprehensive_summary = self._create_nova_lite_summary(doc_result)
+
+            # Compile results
             comprehensive_result = {
                 'success': True,
                 'doc_id': doc_result['doc_id'],
                 'filename': filename,
                 'document_processing': doc_result,
-                'vision_analysis': vision_results,
                 'vector_search_enabled': vector_success,
                 'processing_timestamp': datetime.now().isoformat(),
-                'comprehensive_summary': self._create_comprehensive_summary(
-                    doc_result, vision_results
-                )
+                'comprehensive_summary': comprehensive_summary
             }
-            
+
             # Update session stats
             self.session_stats['documents_processed'] += 1
             if doc_result['processing_summary']['safety_alerts_count'] > 0:
                 self.session_stats['safety_alerts_generated'] += doc_result['processing_summary']['safety_alerts_count']
-            
+
             # Store in app state
             self.processed_documents[doc_result['doc_id']] = comprehensive_result
-            
+
             if progress_callback:
-                progress_callback(1.0, "Processing complete!")
-            
-            logger.info(f"✅ Complete processing finished for: {filename}")
+                progress_callback(1.0, "Nova Lite processing complete!")
+
+            logger.info(f"✅ Nova Lite processing finished for: {filename}")
             return comprehensive_result
-            
+
         except Exception as e:
-            logger.error(f"❌ Complete processing failed: {e}")
+            logger.error(f"❌ Nova Lite processing failed: {e}")
             logger.error(traceback.format_exc())
             return {
                 'success': False,
                 'error': str(e),
-                'user_message': f"An error occurred during processing: {str(e)}"
+                'user_message': f"An error occurred during Nova Lite processing: {str(e)}"
             }
     
+    def _create_nova_lite_summary(self, doc_result: Dict) -> str:
+        """
+        Create a comprehensive summary from Nova Lite analysis results
+        Simplified version that works with combined text + vision analysis
+        """
+        summary_parts = []
+
+        # Header
+        summary_parts.append("# 🏥 COMPREHENSIVE MEDICAL DOCUMENT ANALYSIS")
+        summary_parts.append(f"**Document:** {doc_result.get('filename', 'Unknown')}")
+        summary_parts.append(f"**Analysis Date:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        summary_parts.append(f"**Analysis Method:** Nova Lite AI (Combined Text + Vision)")
+        summary_parts.append("")
+
+        # Executive Summary
+        processing_summary = doc_result.get('processing_summary', {})
+        medications_count = processing_summary.get('medications_found', 0)
+        conditions_count = processing_summary.get('conditions_found', 0)
+        alerts_count = processing_summary.get('safety_alerts_count', 0)
+        has_high_risk = processing_summary.get('has_high_risk_interactions', False)
+        pages_processed = doc_result.get('extraction_metadata', {}).get('pages_processed', 0)
+
+        summary_parts.append("## 📊 EXECUTIVE SUMMARY")
+        summary_parts.append(f"• **Medications Identified:** {medications_count}")
+        summary_parts.append(f"• **Medical Conditions:** {conditions_count}")
+        summary_parts.append(f"• **Safety Alerts:** {alerts_count} {'🚨' if has_high_risk else ''}")
+        summary_parts.append(f"• **Pages Analyzed:** {pages_processed}")
+        summary_parts.append(f"• **Analysis Method:** AI-powered text + vision extraction")
+        summary_parts.append("")
+
+        # Safety Alerts Section
+        safety_alerts = doc_result.get('safety_alerts', [])
+        if safety_alerts:
+            summary_parts.append("## 🚨 CRITICAL SAFETY ALERTS")
+            for alert in safety_alerts:
+                severity_emoji = "🚨" if alert['severity'] == 'HIGH' else "⚠️"
+                summary_parts.append(f"### {severity_emoji} {alert['severity']} RISK")
+                summary_parts.append(f"**Interaction:** {alert['drug1']['name']} + {alert['drug2']['name']}")
+                summary_parts.append(f"**Risk:** {alert['risk_description']}")
+                summary_parts.append(f"**Action Required:** {alert['recommended_action']}")
+                summary_parts.append("")
+        else:
+            summary_parts.append("## ✅ SAFETY STATUS")
+            summary_parts.append("No drug interactions detected.")
+            summary_parts.append("")
+
+        # Medical Report Section
+        if doc_result.get('medical_report'):
+            summary_parts.append("## 📋 DETAILED MEDICAL ANALYSIS")
+            summary_parts.append(doc_result['medical_report'])
+
+        return "\n".join(summary_parts)
+
     def _create_comprehensive_summary(self, doc_result: Dict, vision_results: List[Dict]) -> str:
         """
         Create a comprehensive summary combining all analysis results
@@ -285,26 +330,26 @@ class MedicalDocumentApp:
         
         return "\n".join(summary_parts)
     
-    def query_documents(self, question: str, k_value: int = 7, 
+    def query_documents(self, question: str, k_value: int = 7,
                        use_pattern_analysis: bool = True) -> str:
         """
-        Query across all processed documents
-        Integrates vector search and pattern analysis
+        Simplified query processing using Nova Lite
+        Query → Kendra search → Nova Lite response generation
         """
         if not question.strip():
             return "❓ Please enter a question about your medical documents."
-        
+
         try:
-            logger.info(f"🔍 Processing query: '{question}'")
-            
+            logger.info(f"🔍 Processing query with Nova Lite: '{question}'")
+
             # Update session stats
             self.session_stats['queries_answered'] += 1
-            
-            # Step 1: Multi-document vector search
+
+            # Step 1: Multi-document vector search using Kendra
             search_results = self.vector_search.search_across_documents(
                 question, k=k_value
             )
-            
+
             if not search_results:
                 total_docs = len(self.processed_documents)
                 return f"""❌ **No relevant information found**
@@ -313,7 +358,7 @@ I couldn't find information related to your question in the {total_docs} documen
 
 **Suggestions:**
 • Try rephrasing with different medical terms
-• Upload more relevant medical documents  
+• Upload more relevant medical documents
 • Check if your question relates to the uploaded content
 
 **Example queries:**
@@ -322,74 +367,59 @@ I couldn't find information related to your question in the {total_docs} documen
 • "Compare treatment outcomes between documents"
 """
 
-            # Step 2: Pattern analysis (if enabled and AWS available)
-            pattern_analysis = None
-            if use_pattern_analysis and len(search_results) > 1:
-                try:
-                    pattern_analysis = self.vector_search.analyze_document_patterns(
-                        search_results, question
-                    )
-                except Exception as e:
-                    logger.warning(f"⚠️ Pattern analysis failed: {e}")
-            
-            # Step 3: Generate comprehensive response
+            # Step 2: Generate intelligent response using Nova Lite
+            logger.info("🤖 Generating response with Nova Lite...")
+
+            # Compile context from search results
+            context_parts = []
+            for i, result in enumerate(search_results[:5]):  # Use top 5 results
+                context_parts.append(f"**Source {i+1}** (from {result['filename']}):")
+                context_parts.append(result['content'][:500] + "..." if len(result['content']) > 500 else result['content'])
+                context_parts.append("")
+
+            context_text = "\n".join(context_parts)
+
+            # Create Nova Lite prompt for intelligent response
+            nova_prompt = f"""You are a medical AI assistant analyzing patient documents. Based on the search results below, provide a comprehensive and accurate answer to the user's question.
+
+USER QUESTION: {question}
+
+RELEVANT MEDICAL DOCUMENT SECTIONS:
+{context_text}
+
+Please provide:
+1. **Direct Answer**: Answer the user's question clearly and accurately
+2. **Key Findings**: Highlight the most important medical information found
+3. **Medical Context**: Provide relevant medical context and explanations
+4. **Safety Notes**: Include any safety considerations or warnings if applicable
+
+Format your response professionally and cite specific information from the sources when possible."""
+
+            # Get Nova Lite response
+            ai_response = self.aws_utils.safe_bedrock_call(nova_prompt, max_tokens=600)
+
+            # Compile final response
             response_parts = []
-            
-            # Direct answer section
             response_parts.append("## 📋 ANSWER")
-            
-            # Use Person 3's AI response generation
-            if hasattr(self.vector_search, 'generate_intelligent_answer'):
-                ai_answer = self.vector_search.generate_intelligent_answer(question, search_results)
-                response_parts.append(ai_answer)
-            else:
-                # Fallback: create basic response
-                response_parts.append(self._create_basic_response(question, search_results))
-            
-            # Pattern analysis section (if available)
-            if pattern_analysis and 'error' not in pattern_analysis:
-                response_parts.append("\n## 📊 CROSS-DOCUMENT PATTERN ANALYSIS")
-                response_parts.append(f"**Documents Analyzed:** {pattern_analysis['documents_analyzed']}")
-                
-                patterns = pattern_analysis.get('patterns', {})
-                
-                # Top medications
-                med_freq = patterns.get('medication_frequency', {})
-                if med_freq:
-                    top_meds = dict(list(med_freq.items())[:5])
-                    response_parts.append(f"**Most Common Medications:** {', '.join(top_meds.keys())}")
-                
-                # Top conditions  
-                cond_freq = patterns.get('condition_frequency', {})
-                if cond_freq:
-                    top_conditions = dict(list(cond_freq.items())[:5])
-                    response_parts.append(f"**Most Common Conditions:** {', '.join(top_conditions.keys())}")
-                
-                # AI insights
-                if pattern_analysis.get('ai_insights'):
-                    response_parts.append(f"\n### 🧠 AI Medical Insights:")
-                    response_parts.append(pattern_analysis['ai_insights'])
-            
-            # Source information
+            response_parts.append(ai_response)
+
+            # Add source information
             unique_docs = set(result['doc_id'] for result in search_results)
-            chart_sources = sum(1 for r in search_results if r.get('contains_chart_info', False))
-            
             response_parts.append(f"\n## 📄 SOURCES")
             response_parts.append(f"• **Documents searched:** {len(unique_docs)}")
             response_parts.append(f"• **Relevant sections found:** {len(search_results)}")
-            response_parts.append(f"• **Visual content included:** {chart_sources} chart/graph descriptions")
-            
+
             # Document list
             doc_files = set(result['filename'] for result in search_results)
             response_parts.append(f"• **Source files:** {', '.join(doc_files)}")
-            
+
             final_response = "\n".join(response_parts)
-            
-            logger.info(f"✅ Query processed successfully: {len(search_results)} results")
+
+            logger.info(f"✅ Nova Lite query processed successfully: {len(search_results)} results")
             return final_response
-            
+
         except Exception as e:
-            logger.error(f"❌ Query processing failed: {e}")
+            logger.error(f"❌ Nova Lite query processing failed: {e}")
             return f"❌ **Error processing query:** {str(e)}\n\nPlease try again or contact support if the issue persists."
     
     def _create_basic_response(self, question: str, search_results: List[Dict]) -> str:
@@ -588,8 +618,8 @@ def create_gradio_interface(app: MedicalDocumentApp):
             """
             <div class="title-container">
                 <h1>🏥 Intelligent Medical Document Query System</h1>
-                <p><strong>Advanced AI-Powered Multi-Document Analysis Platform</strong></p>
-                <p>Transform medical PDFs into searchable intelligence • Extract insights from charts and graphs • Detect drug interactions • Cross-document pattern analysis</p>
+                <p><strong>Powered by Amazon Nova Lite AI • Advanced Multimodal Document Analysis</strong></p>
+                <p>Transform medical PDFs into searchable intelligence • Nova Lite vision + text analysis • Drug interaction detection • Multi-document AI search with Kendra</p>
             </div>
             """,
             elem_classes=["title-container"]
@@ -598,13 +628,14 @@ def create_gradio_interface(app: MedicalDocumentApp):
         with gr.Tab("📄 Document Analysis & Query") as main_tab:
             gr.Markdown("""
             ### 🎯 Upload Medical Documents and Ask Intelligent Questions
-            
-            **System Capabilities:**
-            • Process both digital and scanned medical PDFs
-            • Extract text, analyze charts and medical images  
-            • Detect drug interactions and safety alerts
-            • Search across multiple documents simultaneously
-            • Generate comprehensive medical insights
+
+            **Nova Lite AI System Capabilities:**
+            • **Advanced AI Processing**: Use Amazon Nova Lite for both text extraction and visual analysis
+            • **Smart Document Understanding**: Analyze both digital and scanned medical PDFs with vision AI
+            • **Medical Intelligence**: Extract medications, conditions, and lab results with AI reasoning
+            • **Safety Analysis**: Detect drug interactions and generate safety alerts
+            • **Multi-Document Search**: Search and compare insights across multiple documents using Kendra
+            • **Intelligent Responses**: Get comprehensive answers powered by Nova Lite AI
             """)
             
             with gr.Row():
@@ -618,7 +649,7 @@ def create_gradio_interface(app: MedicalDocumentApp):
                     
                     # Processing button
                     process_btn = gr.Button(
-                        "🔄 Process Document",
+                        "🤖 Process with Nova Lite AI",
                         variant="primary",
                         size="lg"
                     )
@@ -761,10 +792,9 @@ def create_gradio_interface(app: MedicalDocumentApp):
             • Professional medical reporting with source attribution
             
             ### **AWS AI Services Used**
-            • **Amazon Textract** - Advanced document analysis and OCR
-            • **Amazon Bedrock (Claude 3)** - AI reasoning and natural language generation
-            • **Amazon Comprehend Medical** - Medical entity recognition
-            • **Vector Search Engine** - Semantic similarity matching
+            • **Amazon Bedrock (Nova Lite)** - Advanced multimodal AI for text extraction, vision analysis, and medical reasoning
+            • **Amazon Kendra** - Enterprise search service for semantic document indexing and retrieval
+            • **Integrated AI Pipeline** - Streamlined processing with fewer dependencies for faster, more reliable results
             
             ### **How to Use**
             

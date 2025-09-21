@@ -63,113 +63,151 @@ class MedicalDocumentProcessor:
     
     def process_document_complete(self, pdf_path: str) -> Dict:
         """
-        Complete document processing pipeline
-        Main function that integrates all processing steps and stores in Kendra
+        Complete document processing pipeline using Nova Lite
+        Simplified approach: PDF → Nova Lite (text + vision) → Medical Analysis
         """
-        doc_id = f"doc_{{hashlib.md5(pdf_path.encode()).hexdigest()[:8]}}"
+        doc_id = f"doc_{hashlib.md5(pdf_path.encode()).hexdigest()[:8]}"
         filename = Path(pdf_path).name
-        
-        logger.info(f"🔄 Starting complete processing for: {filename}")
-        
+
+        logger.info(f"🔄 Starting Nova Lite processing for: {filename}")
+
         try:
+            # Step 1: Extract text and analyze with Nova Lite (includes vision analysis)
             extracted_text, extraction_metadata = self.extract_text_from_pdf(pdf_path)
-            
+
             if not extracted_text.strip():
-                return {'success': False, 'error': 'No text extracted', 'doc_id': doc_id}
-            
+                return {'success': False, 'error': 'No content extracted by Nova Lite', 'doc_id': doc_id}
+
+            # Step 2: Extract medical entities using Nova Lite
             medical_entities = self.extract_medical_entities(extracted_text)
-            
+
+            if 'error' in medical_entities:
+                logger.warning(f"⚠️ Medical entity extraction had issues: {medical_entities['error']}")
+                # Continue with empty entities rather than failing
+                medical_entities = {
+                    'medications': [],
+                    'conditions': [],
+                    'procedures': [],
+                    'anatomy': [],
+                    'test_results': [],
+                    'phi_detected': []
+                }
+
+            # Step 3: Check drug safety (rule-based, still works)
             safety_alerts = self.check_drug_safety(medical_entities.get('medications', []))
-            
+
+            # Step 4: Generate medical report
             medical_report = self.generate_medical_report(
                 extracted_text, medical_entities, safety_alerts
             )
-            
-            # Store in Kendra
-            self.vector_search.store_document_vectors(
-                doc_id=doc_id,
-                text_content=extracted_text,
-                medical_entities=medical_entities,
-                chart_descriptions=[], # Placeholder for vision processing
-                metadata=extraction_metadata
-            )
-            
+
+            # Create processing summary for response
+            processing_summary = {
+                'medications_found': len(medical_entities.get('medications', [])),
+                'conditions_found': len(medical_entities.get('conditions', [])),
+                'safety_alerts_count': len(safety_alerts),
+                'has_high_risk_interactions': any(alert['severity'] == 'HIGH' for alert in safety_alerts),
+                'extraction_method': 'nova_lite_combined'
+            }
+
             self.processed_documents[doc_id] = {
                 'filename': filename,
                 'text_length': len(extracted_text),
+                'processing_summary': processing_summary
             }
-            
-            return {
+
+            result = {
                 'success': True,
                 'doc_id': doc_id,
+                'filename': filename,
+                'extracted_text': extracted_text,
+                'medical_entities': medical_entities,
+                'safety_alerts': safety_alerts,
                 'medical_report': medical_report,
+                'extraction_metadata': extraction_metadata,
+                'processing_summary': processing_summary
             }
-            
+
+            logger.info(f"✅ Nova Lite processing complete for: {filename}")
+            return result
+
         except Exception as e:
-            logger.error(f"❌ Complete document processing failed: {e}")
+            logger.error(f"❌ Nova Lite document processing failed: {e}")
             return {'success': False, 'error': str(e), 'doc_id': doc_id}
 
     # ... (the rest of the methods remain the same)
     def extract_text_from_pdf(self, pdf_path: str) -> Tuple[str, Dict]:
         """
-        Extract text from PDF using Textract
-        Handles both digital and scanned documents
+        Extract text and analyze content using Nova Lite vision and text capabilities
+        Simplified approach using Nova Lite for both text extraction and visual analysis
         """
-        logger.info(f"📄 Processing PDF: {Path(pdf_path).name}")
-        
+        logger.info(f"📄 Processing PDF with Nova Lite: {Path(pdf_path).name}")
+
         try:
-            # Read PDF file
-            with open(pdf_path, 'rb') as file:
-                pdf_bytes = file.read()
-            
-            # Use AWS utilities for safe Textract call
-            textract_response = self.aws_utils.safe_textract_call(
-                pdf_bytes, 
-                feature_types=['TABLES', 'FORMS']
-            )
-            
-            if 'error' in textract_response:
-                return "", {'error': textract_response['error']}
-            
-            # Extract text from Textract response
-            extracted_text = ""
-            tables_found = 0
-            forms_found = 0
-            
-            for block in textract_response['Blocks']:
-                if block['BlockType'] == 'LINE':
-                    extracted_text += block['Text'] + "\n"
-                    
-                elif block['BlockType'] == 'TABLE':
-                    tables_found += 1
-                    table_text = self._extract_table_content(block, textract_response['Blocks'])
-                    extracted_text += f"\n[TABLE {tables_found}]: {table_text}\n"
-                    
-                elif block['BlockType'] == 'KEY_VALUE_SET':
-                    if block.get('EntityTypes') and 'KEY' in block['EntityTypes']:
-                        forms_found += 1
-                        key_text = block.get('Text', '')
-                        if key_text:
-                            extracted_text += f"[FORM FIELD]: {key_text}\n"
-            
+            # Import pdf2image for conversion
+            from pdf2image import convert_from_path
+            from PIL import Image
+            import base64
+            import io
+
+            # Convert PDF to images
+            logger.info("Converting PDF pages to images...")
+            images = convert_from_path(pdf_path, dpi=150, fmt='RGB')
+
+            all_extracted_text = ""
+            pages_processed = 0
+
+            # Process each page with Nova Lite
+            for i, image in enumerate(images[:5]):  # Limit to 5 pages for hackathon
+                page_num = i + 1
+                logger.info(f"Processing page {page_num} with Nova Lite...")
+
+                # Convert image to base64 for Nova Lite
+                buffer = io.BytesIO()
+                image.save(buffer, format='PNG', quality=95)
+                img_bytes = buffer.getvalue()
+                image_b64 = base64.b64encode(img_bytes).decode('utf-8')
+
+                # Create comprehensive prompt for Nova Lite
+                prompt = f"""Analyze this page {page_num} of a medical document. Extract ALL text content and describe any visual elements:
+
+1. **Text Extraction**: Extract all readable text exactly as it appears, maintaining structure and formatting
+2. **Medical Data**: Identify and extract all medical information including:
+   - Patient information and demographics
+   - Medications, dosages, and frequencies
+   - Medical conditions and diagnoses
+   - Lab results and vital signs with values and units
+   - Treatment plans and recommendations
+3. **Visual Elements**: Describe any charts, graphs, tables, or medical images
+4. **Clinical Values**: Extract all numerical values with their units and context
+
+Provide a comprehensive analysis that captures both text content and visual information."""
+
+                # Call Nova Lite vision API
+                page_analysis = self.aws_utils.safe_bedrock_vision_call(image_b64, prompt)
+
+                if not page_analysis.startswith("Error:"):
+                    all_extracted_text += f"\n\n=== PAGE {page_num} ===\n{page_analysis}\n"
+                    pages_processed += 1
+                else:
+                    logger.warning(f"⚠️ Nova Lite analysis failed for page {page_num}: {page_analysis}")
+
             # Document metadata
             metadata = {
                 'filename': Path(pdf_path).name,
-                'total_blocks': len(textract_response['Blocks']),
-                'tables_found': tables_found,
-                'forms_found': forms_found,
-                'text_length': len(extracted_text),
-                'extraction_method': 'textract',
+                'pages_processed': pages_processed,
+                'total_pages': len(images),
+                'text_length': len(all_extracted_text),
+                'extraction_method': 'nova_lite_vision',
                 'processing_time': datetime.now().isoformat()
             }
-            
-            logger.info(f"✅ Text extraction successful: {len(extracted_text)} characters, "
-                       f"{tables_found} tables, {forms_found} forms")
-            
-            return extracted_text, metadata
-            
+
+            logger.info(f"✅ Nova Lite extraction successful: {len(all_extracted_text)} characters from {pages_processed} pages")
+
+            return all_extracted_text, metadata
+
         except Exception as e:
-            logger.error(f"❌ PDF text extraction failed: {e}")
+            logger.error(f"❌ Nova Lite PDF extraction failed: {e}")
             return "", {'error': str(e)}
     
     def _extract_table_content(self, table_block: Dict, all_blocks: List[Dict]) -> str:
@@ -186,19 +224,55 @@ class MedicalDocumentProcessor:
     
     def extract_medical_entities(self, text: str) -> Dict:
         """
-        Extract medical entities using Comprehend Medical
-        Returns organized medical information
+        Extract medical entities using Nova Lite text analysis
+        Returns organized medical information using AI instead of specialized medical NLP
         """
-        logger.info("🩺 Extracting medical entities...")
-        
+        logger.info("🩺 Extracting medical entities with Nova Lite...")
+
         try:
-            # Use AWS utilities for safe Comprehend Medical call
-            comprehend_response = self.aws_utils.safe_comprehend_medical_call(text)
-            
-            if not comprehend_response['success']:
-                return {'error': comprehend_response['error']}
-            
-            # Organize entities by medical category
+            # Create prompt for Nova Lite to extract medical entities
+            medical_prompt = f"""Analyze this medical document text and extract all medical entities. Organize them into the following categories:
+
+MEDICAL TEXT TO ANALYZE:
+{text}
+
+Please extract and organize the following medical information:
+
+1. **MEDICATIONS**: List all medications mentioned with dosages, frequencies, and any administration details
+2. **CONDITIONS**: List all medical conditions, diagnoses, symptoms, and health issues
+3. **PROCEDURES**: List all medical procedures, treatments, surgeries, and interventions
+4. **ANATOMY**: List all anatomical references, body parts, and organ systems mentioned
+5. **TEST_RESULTS**: List all lab results, vital signs, measurements, and diagnostic findings with values and units
+6. **PHI_DETECTED**: List any personally identifiable information like names, dates of birth, addresses, phone numbers
+
+For each item, provide:
+- The exact text as it appears
+- The category it belongs to
+- Any additional details (like dosage for medications, values for test results)
+
+Format your response as a structured list under each category."""
+
+            # Call Nova Lite for medical entity extraction
+            nova_response = self.aws_utils.safe_bedrock_call(medical_prompt, max_tokens=800)
+
+            # Parse the Nova Lite response into organized structure
+            organized_entities = self._parse_nova_medical_response(nova_response)
+
+            logger.info(f"✅ Nova Lite medical entities extracted: {len(organized_entities['medications'])} medications, "
+                       f"{len(organized_entities['conditions'])} conditions")
+
+            return organized_entities
+
+        except Exception as e:
+            logger.error(f"❌ Nova Lite medical entity extraction failed: {e}")
+            return {'error': str(e)}
+
+    def _parse_nova_medical_response(self, nova_response: str) -> Dict:
+        """
+        Parse Nova Lite response into organized medical entities structure
+        Simple parsing for hackathon - can be enhanced with more sophisticated NLP
+        """
+        try:
             organized_entities = {
                 'medications': [],
                 'conditions': [],
@@ -207,54 +281,56 @@ class MedicalDocumentProcessor:
                 'test_results': [],
                 'phi_detected': []
             }
-            
-            # Process medical entities
-            for entity in comprehend_response['entities']:
-                entity_info = {
-                    'text': entity['Text'],
-                    'confidence': entity['Score'],
-                    'type': entity.get('Type', 'UNKNOWN'),
-                    'category': entity['Category'],
-                    'attributes': []
-                }
-                
-                # Extract attributes (dosage, frequency, etc.)
-                for attribute in entity.get('Attributes', []):
-                    entity_info['attributes'].append({
-                        'type': attribute['Type'],
-                        'text': attribute['Text'],
-                        'confidence': attribute['Score']
-                    })
-                
-                # Categorize entity
-                category = entity['Category'].lower()
-                if category == 'medication':
-                    organized_entities['medications'].append(entity_info)
-                elif category == 'medical_condition':
-                    organized_entities['conditions'].append(entity_info)
-                elif category == 'procedure':
-                    organized_entities['procedures'].append(entity_info)
-                elif category == 'anatomy':
-                    organized_entities['anatomy'].append(entity_info)
-                elif category == 'test_treatment_procedure':
-                    organized_entities['test_results'].append(entity_info)
-            
-            # Process PHI entities
-            for phi_entity in comprehend_response['phi']:
-                organized_entities['phi_detected'].append({
-                    'text': phi_entity['Text'],
-                    'type': phi_entity['Type'],
-                    'confidence': phi_entity['Score']
-                })
-            
-            logger.info(f"✅ Medical entities extracted: {len(organized_entities['medications'])} medications, "
-                       f"{len(organized_entities['conditions'])} conditions")
-            
+
+            # Simple keyword-based parsing for demo
+            # In production, would use more sophisticated parsing
+            lines = nova_response.split('\n')
+            current_category = None
+
+            for line in lines:
+                line = line.strip()
+                if not line:
+                    continue
+
+                # Detect category headers
+                line_lower = line.lower()
+                if 'medication' in line_lower and ':' in line:
+                    current_category = 'medications'
+                elif 'condition' in line_lower and ':' in line:
+                    current_category = 'conditions'
+                elif 'procedure' in line_lower and ':' in line:
+                    current_category = 'procedures'
+                elif 'anatomy' in line_lower and ':' in line:
+                    current_category = 'anatomy'
+                elif 'test' in line_lower and ':' in line:
+                    current_category = 'test_results'
+                elif 'phi' in line_lower and ':' in line:
+                    current_category = 'phi_detected'
+                elif line.startswith('-') or line.startswith('•') and current_category:
+                    # Extract entity text
+                    entity_text = line.lstrip('- •').strip()
+                    if entity_text and current_category:
+                        entity_info = {
+                            'text': entity_text,
+                            'confidence': 0.85,  # Default confidence for Nova Lite extraction
+                            'type': 'EXTRACTED_BY_NOVA_LITE',
+                            'category': current_category.upper(),
+                            'attributes': []
+                        }
+                        organized_entities[current_category].append(entity_info)
+
             return organized_entities
-            
+
         except Exception as e:
-            logger.error(f"❌ Medical entity extraction failed: {e}")
-            return {'error': str(e)}
+            logger.error(f"❌ Nova Lite response parsing failed: {e}")
+            return {
+                'medications': [],
+                'conditions': [],
+                'procedures': [],
+                'anatomy': [],
+                'test_results': [],
+                'phi_detected': []
+            }
     
     def check_drug_safety(self, medications: List[Dict]) -> List[Dict]:
         """
