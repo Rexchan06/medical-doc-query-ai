@@ -1,0 +1,100 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+
+body {
+    font-family: 'Inter', sans-serif;
+    background: #f9fafb;
+    color: #1f2937;
+}
+
+/* Header */
+.header {
+    text-align: center;
+    padding: 20px 10px;
+    margin: 0 auto;
+    border-radius: 10px;
+    background: #1c1c84;
+}
+.badge {
+    background: #f9fafb;
+    color: black;
+    border: 1px solid #000000;
+    border-radius: 20px;
+    padding: 8px 16px;
+    font-weight: 600;
+    display: inline-block;
+}
+.hero h1 {
+    font-size: 40px;
+    font-weight: 800;
+    margin: 16px 0;
+}
+.hero p {
+    font-size: 1.2rem;
+    color: #ffffff;
+}
+.features {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 12px;
+}
+.feature {
+    border: 1px solid #d1d5db;
+    border-radius: 20px;
+    padding: 8px 16px;
+    font-size: 0.9rem;
+}
+
+/* Info Card */
+.info-card {
+    background: #1c1c84;
+    color: #ffffff;
+    border-left: 4px solid black;
+    padding: 20px;
+    margin-bottom: 20px;
+    border-radius: 10px;
+}
+.info-card h3 {
+    color: #ffffff;
+    font-size: 25px;
+}
+.info-card .description {
+    font-size: 20px;
+    color: #ffffff;
+    margin-top: 10px;
+}
+
+/* Section Header */
+.section-header {
+    background: #3d3d3d;
+    border: 1px solid #3d3d3d;
+    padding: 12px 16px;
+    border-radius: 8px;
+    margin: 20px 0;
+    text-align: center;
+}
+.section-header h3 {
+    background: #3d3d3d;
+    color: #ffffff;
+    margin: 0;
+    font-weight: 700;
+}
+
+/* Results Box */
+#results_output {
+    max-height: 100vh;
+    overflow-y: auto;
+    background: #3d3d3d;
+    border: 1px solid #3d3d3d;
+    border-radius: 8px;
+    padding: 15px;
+}
+
+/* Tabs */
+.tab-title {
+    color: #1e293b;
+    margin-bottom: 20px;
+}
+.sub-title {
+    margin: 20px 0 15px;
+}
