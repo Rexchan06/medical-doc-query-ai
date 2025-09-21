@@ -230,7 +230,11 @@ class AWSUtilities:
         For use by Person 4 (Document Processing)
         """
         try:
+            import base64
             bedrock_client = self.aws_config.get_service_client('bedrock')
+
+            # Decode base64 string to bytes
+            image_bytes = base64.b64decode(image_base64)
 
             # Use converse API for Nova Lite vision
             response = bedrock_client.converse(
@@ -242,7 +246,7 @@ class AWSUtilities:
                         {
                             'image': {
                                 'format': 'png',
-                                'source': {'bytes': image_base64}
+                                'source': {'bytes': image_bytes}
                             }
                         }
                     ]

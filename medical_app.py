@@ -976,9 +976,8 @@ def main():
         demo.launch(
             share=True,              # Create shareable public URL for demo
             server_name="0.0.0.0",   # Allow external access
-            server_port=7860,        # Standard port
+            server_port=7862,        # Alternative port
             show_error=True,         # Show detailed errors
-            show_tips=True,          # Show helpful tips
             favicon_path=None,       # Custom favicon (optional)
             ssl_verify=False         # For development
         )
