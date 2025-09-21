@@ -54,9 +54,7 @@ class AWSConfigManager:
         self.services = {}
         self.account_id = 154744860097
         self.cost_tracker = {
-            'textract_pages': 0,
             'bedrock_tokens': 0,
-            'comprehend_requests': 0,
             'kendra_queries': 0,
             'kendra_documents': 0,
             'estimated_cost': 0.0
@@ -71,30 +69,16 @@ class AWSConfigManager:
     def _initialize_aws_services(self):
         """Initialize all required AWS service clients"""
         try:
-            logger.info("🔧 Initializing AWS services...")
-            
-            # Core AI services
-            self.services['textract'] = boto3.client('textract', region_name=self.region_name)
+            logger.info("🔧 Initializing AWS services for Nova Lite + Kendra...")
+
+            # Core AI services (simplified)
             self.services['bedrock'] = boto3.client('bedrock-runtime', region_name=self.region_name)
-            self.services['comprehend_medical'] = boto3.client('comprehendmedical', region_name=self.region_name)
             self.services['kendra'] = boto3.client('kendra', region_name=self.region_name)
-            
-            # Storage and processing
+
+            # Storage (optional)
             self.services['s3'] = boto3.client('s3', region_name=self.region_name)
-            self.services['lambda'] = boto3.client('lambda', region_name=self.region_name)
-            
-            # Monitoring and analytics
-            self.services['cloudwatch'] = boto3.client('cloudwatch', region_name=self.region_name)
-            
-            # Additional services (if budget allows)
-            try:
-                self.services['translate'] = boto3.client('translate', region_name=self.region_name)
-                self.services['polly'] = boto3.client('polly', region_name=self.region_name)
-                self.services['transcribe'] = boto3.client('transcribe', region_name=self.region_name)
-            except Exception as e:
-                logger.warning(f"⚠️ Optional services not available: {e}")
-            
-            logger.info("✅ AWS services initialized successfully")
+
+            logger.info("✅ Nova Lite + Kendra services initialized successfully")
             
         except NoCredentialsError:
             logger.error("❌ AWS credentials not configured. Run 'aws configure'")
@@ -104,46 +88,24 @@ class AWSConfigManager:
             raise
     
     def _test_all_services(self) -> Dict[str, bool]:
-        """Test connectivity to all AWS services"""
-        logger.info("🧪 Testing AWS service connectivity...")
-        
+        """Test connectivity to Nova Lite and Kendra services"""
+        logger.info("🧪 Testing Nova Lite + Kendra connectivity...")
+
         service_status = {}
-        
-        # Test Textract
+
+        # Test Bedrock Nova Lite
         try:
-            # Simple test call
-            self.services['textract'].get_document_analysis(JobId='test-job-id')
-        except ClientError as e:
-            if 'InvalidJobIdException' in str(e):
-                service_status['textract'] = True  # Service accessible, just invalid job ID
-            else:
-                service_status['textract'] = False
-        except Exception:
-            service_status['textract'] = False
-        
-        # Test Bedrock
-        try:
-            response = self.services['bedrock'].invoke_model(
-                modelId='amazon.nova-lite-v1:0',
-                body=json.dumps({
-                    'messages': [{'role': 'user', 'content': [{'type': 'text', 'text': 'test'}]}],
-                    'inferenceConfig': {'temperature': 0.1, 'maxTokens': 10}
-                })
+            response = self.services['bedrock'].converse(
+                modelId='us.amazon.nova-lite-v1:0',
+                messages=[{'role': 'user', 'content': [{'text': 'test'}]}],
+                inferenceConfig={'temperature': 0.1, 'maxTokens': 10}
             )
             service_status['bedrock'] = True
             logger.info("✅ Bedrock Nova Lite connectivity confirmed")
         except Exception as e:
             logger.error(f"❌ Bedrock Nova Lite test failed: {e}")
             service_status['bedrock'] = False
-        
-        # Test Comprehend Medical
-        try:
-            self.services['comprehend_medical'].detect_entities_v2(Text='test medical text')
-            service_status['comprehend_medical'] = True
-        except Exception as e:
-            service_status['comprehend_medical'] = False
-            logger.warning(f"⚠️ Comprehend Medical test failed: {e}")
-        
+
         # Test Kendra
         try:
             self.services['kendra'].list_indices()
@@ -152,12 +114,12 @@ class AWSConfigManager:
         except Exception as e:
             service_status['kendra'] = False
             logger.warning(f"⚠️ Kendra test failed: {e}")
-        
+
         # Log overall status
         working_services = sum(service_status.values())
         total_services = len(service_status)
         logger.info(f"📊 AWS Services Status: {working_services}/{total_services} working")
-        
+
         return service_status
     
     def get_service_client(self, service_name: str):
@@ -171,13 +133,9 @@ class AWSConfigManager:
         
         # Cost estimates (approximate)
         cost_per_unit = {
-            'textract_page': 0.0015,
             'bedrock_1k_tokens': 0.00025,
-            'comprehend_medical_request': 0.0001,
             'kendra_query': 0.0003,
-            'kendra_document': 0.01,
-            'translate_character': 0.000015,
-            'polly_character': 0.000004
+            'kendra_document': 0.01
         }
         
         cost_key = f"{service}_{operation}"
@@ -192,7 +150,7 @@ class AWSConfigManager:
         return {
             'total_estimated_cost': round(self.cost_tracker['estimated_cost'], 4),
             'remaining_budget': round(100 - self.cost_tracker['estimated_cost'], 2),
-            'services_used': list(self.services.keys()),
+            'services_used': ['bedrock-nova-lite', 'kendra', 's3'],
             'timestamp': datetime.now().isoformat()
         }
     
@@ -234,36 +192,6 @@ class AWSUtilities:
         self.aws_config = aws_config
         self.logger = logging.getLogger(__name__)
     
-    def safe_textract_call(self, document_bytes: bytes, feature_types: List[str] = None) -> Dict:
-        """
-        Safe Textract API call with error handling and cost tracking
-        For use by Person 2 (Backend) and Person 4 (Document Processing)
-        """
-        try:
-            textract_client = self.aws_config.get_service_client('textract')
-            
-            # Prepare request
-            request_params = {
-                'Document': {'Bytes': document_bytes}
-            }
-            
-            if feature_types:
-                request_params['FeatureTypes'] = feature_types
-                response = textract_client.analyze_document(**request_params)
-            else:
-                response = textract_client.detect_document_text(**request_params)
-            
-            # Track costs
-            estimated_pages = len(document_bytes) / (1024 * 1024)  # Rough estimate
-            self.aws_config.track_cost('textract', 'page', max(1, int(estimated_pages)))
-            
-            self.logger.info(f"✅ Textract processing successful: {len(response['Blocks'])} blocks")
-            return response
-            
-        except Exception as e:
-            self.logger.error(f"❌ Textract API call failed: {e}")
-            return {'error': str(e), 'Blocks': []}
-    
     def safe_bedrock_call(self, prompt: str, max_tokens: int = 500, model_id: str = None) -> str:
         """
         Safe Bedrock API call with error handling and cost tracking
@@ -273,23 +201,17 @@ class AWSUtilities:
             bedrock_client = self.aws_config.get_service_client('bedrock')
 
             if model_id is None:
-                model_id = 'amazon.nova-lite-v1:0'
+                model_id = 'us.amazon.nova-lite-v1:0'
 
-            # Prepare request for Nova Lite format
-            request_body = {
-                'messages': [{'role': 'user', 'content': [{'type': 'text', 'text': prompt}]}],
-                'inferenceConfig': {'temperature': 0.1, 'maxTokens': max_tokens}
-            }
-
-            # Make API call
-            response = bedrock_client.invoke_model(
+            # Use the correct converse API for Nova Lite
+            response = bedrock_client.converse(
                 modelId=model_id,
-                body=json.dumps(request_body)
+                messages=[{'role': 'user', 'content': [{'text': prompt}]}],
+                inferenceConfig={'temperature': 0.1, 'maxTokens': max_tokens}
             )
 
-            # Parse response
-            result = json.loads(response['body'].read())
-            answer = result['output']['message']['content'][0]['text']
+            # Parse response from converse API
+            answer = response['output']['message']['content'][0]['text']
 
             # Track costs (approximate)
             estimated_tokens = len(prompt.split()) + len(answer.split())
@@ -310,28 +232,26 @@ class AWSUtilities:
         try:
             bedrock_client = self.aws_config.get_service_client('bedrock')
 
-            request_body = {
-                'messages': [{
+            # Use converse API for Nova Lite vision
+            response = bedrock_client.converse(
+                modelId='us.amazon.nova-lite-v1:0',
+                messages=[{
                     'role': 'user',
                     'content': [
-                        {'type': 'text', 'text': prompt},
+                        {'text': prompt},
                         {
-                            'type': 'image',
-                            'format': 'png',
-                            'source': {'bytes': image_base64}
+                            'image': {
+                                'format': 'png',
+                                'source': {'bytes': image_base64}
+                            }
                         }
                     ]
                 }],
-                'inferenceConfig': {'temperature': 0.1, 'maxTokens': 400}
-            }
-
-            response = bedrock_client.invoke_model(
-                modelId='amazon.nova-lite-v1:0',
-                body=json.dumps(request_body)
+                inferenceConfig={'temperature': 0.1, 'maxTokens': 400}
             )
 
-            result = json.loads(response['body'].read())
-            answer = result['output']['message']['content'][0]['text']
+            # Parse response from converse API
+            answer = response['output']['message']['content'][0]['text']
 
             # Track vision costs
             self.aws_config.track_cost('bedrock', 'vision_image', 1)
@@ -342,36 +262,6 @@ class AWSUtilities:
         except Exception as e:
             self.logger.error(f"❌ Bedrock Nova Lite vision call failed: {e}")
             return f"Vision analysis failed: {str(e)}"
-    
-    def safe_comprehend_medical_call(self, text: str) -> Dict:
-        """
-        Safe Comprehend Medical API call
-        For use by Person 2 (Backend) and Person 3 (AI/ML)
-        """
-        try:
-            comprehend_client = self.aws_config.get_service_client('comprehend_medical')
-            
-            # Detect medical entities
-            entities_response = comprehend_client.detect_entities_v2(Text=text)
-            
-            # Detect PHI
-            phi_response = comprehend_client.detect_phi(Text=text)
-            
-            # Track costs
-            self.aws_config.track_cost('comprehend_medical', 'request', 1)
-            
-            result = {
-                'entities': entities_response.get('Entities', []),
-                'phi': phi_response.get('Entities', []),
-                'success': True
-            }
-            
-            self.logger.info(f"✅ Comprehend Medical successful: {len(result['entities'])} entities")
-            return result
-            
-        except Exception as e:
-            self.logger.error(f"❌ Comprehend Medical call failed: {e}")
-            return {'error': str(e), 'entities': [], 'phi': [], 'success': False}
     
     def safe_kendra_create_index(self, index_name: str, description: str = "Medical Document Index") -> Dict:
         """

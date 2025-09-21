@@ -24,24 +24,20 @@ def test_nova_lite():
         print("\n2. Testing direct API call...")
         bedrock_client = aws_config.get_service_client('bedrock')
 
-        request_body = {
-            'messages': [{'role': 'user', 'content': [{'type': 'text', 'text': 'Hello, are you Nova Lite?'}]}],
-            'inferenceConfig': {'temperature': 0.1, 'maxTokens': 100}
-        }
-
-        response = bedrock_client.invoke_model(
-            modelId='amazon.nova-lite-v1:0',
-            body=json.dumps(request_body)
+        # Use the correct converse API for Nova Lite
+        response = bedrock_client.converse(
+            modelId='us.amazon.nova-lite-v1:0',
+            messages=[{'role': 'user', 'content': [{'text': 'Hello, are you Nova Lite?'}]}],
+            inferenceConfig={'temperature': 0.1, 'maxTokens': 100}
         )
 
-        result = json.loads(response['body'].read())
-        print(f"Direct API response structure: {result.keys()}")
+        print(f"Direct API response structure: {response.keys()}")
 
-        if 'output' in result:
-            answer = result['output']['message']['content'][0]['text']
+        if 'output' in response:
+            answer = response['output']['message']['content'][0]['text']
             print(f"Direct API answer: {answer}")
         else:
-            print(f"Unexpected response format: {result}")
+            print(f"Unexpected response format: {response}")
 
         print("\nNova Lite test completed successfully!")
         return True
