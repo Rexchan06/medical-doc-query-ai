@@ -77,7 +77,6 @@ class MedicalDocumentApp:
         self.session_stats = {
             'documents_processed': 0,
             'queries_answered': 0,
-            'safety_alerts_generated': 0,
             'session_start': datetime.now().isoformat()
         }
         
@@ -152,7 +151,8 @@ class MedicalDocumentApp:
                 doc_result['extracted_text'],  # This includes both text and vision analysis
                 doc_result['medical_entities'],
                 [],  # No separate vision descriptions needed - already in extracted_text
-                doc_result['extraction_metadata']
+                doc_result['extraction_metadata'],
+                pdf_file.name  # Pass PDF file path for direct processing fallback
             )
 
             if not vector_success:
@@ -177,8 +177,6 @@ class MedicalDocumentApp:
 
             # Update session stats
             self.session_stats['documents_processed'] += 1
-            if doc_result['processing_summary']['safety_alerts_count'] > 0:
-                self.session_stats['safety_alerts_generated'] += doc_result['processing_summary']['safety_alerts_count']
 
             # Store in app state
             self.processed_documents[doc_result['doc_id']] = comprehensive_result
@@ -216,14 +214,12 @@ class MedicalDocumentApp:
         processing_summary = doc_result.get('processing_summary', {})
         medications_count = processing_summary.get('medications_found', 0)
         conditions_count = processing_summary.get('conditions_found', 0)
-        alerts_count = processing_summary.get('safety_alerts_count', 0)
         has_high_risk = processing_summary.get('has_high_risk_interactions', False)
         pages_processed = doc_result.get('extraction_metadata', {}).get('pages_processed', 0)
 
         summary_parts.append("## 📊 EXECUTIVE SUMMARY")
         summary_parts.append(f"• **Medications Identified:** {medications_count}")
         summary_parts.append(f"• **Medical Conditions:** {conditions_count}")
-        summary_parts.append(f"• **Safety Alerts:** {alerts_count} {'🚨' if has_high_risk else ''}")
         summary_parts.append(f"• **Pages Analyzed:** {pages_processed}")
         summary_parts.append(f"• **Analysis Method:** AI-powered text + vision extraction")
         summary_parts.append("")
@@ -266,7 +262,6 @@ class MedicalDocumentApp:
         # Executive Summary
         processing_summary = doc_result.get('processing_summary', {})
         medications_count = processing_summary.get('medications_found', 0)
-        alerts_count = processing_summary.get('safety_alerts_count', 0)
         has_high_risk = processing_summary.get('has_high_risk_interactions', False)
         
         # Count vision analysis results
@@ -275,7 +270,6 @@ class MedicalDocumentApp:
         
         summary_parts.append("## 📊 EXECUTIVE SUMMARY")
         summary_parts.append(f"• **Medications Identified:** {medications_count}")
-        summary_parts.append(f"• **Safety Alerts:** {alerts_count} {'🚨' if has_high_risk else ''}")
         summary_parts.append(f"• **Pages with Visual Content:** {pages_analyzed}")
         summary_parts.append(f"• **Charts/Graphs Analyzed:** {charts_found}")
         summary_parts.append("")
@@ -346,9 +340,32 @@ class MedicalDocumentApp:
             self.session_stats['queries_answered'] += 1
 
             # Step 1: Multi-document vector search using Kendra
+            print(f"\n{'='*80}")
+            print(f"DEBUG: SEARCH QUERY")
+            print(f"{'='*80}")
+            print(f"Question: '{question}'")
+            print(f"K value: {k_value}")
+            print(f"Searching across documents...")
+            print(f"{'='*80}")
+
             search_results = self.vector_search.search_across_documents(
                 question, k=k_value
             )
+
+            # DEBUG: Show search results
+            print(f"\n{'='*80}")
+            print(f"DEBUG: SEARCH RESULTS")
+            print(f"{'='*80}")
+            print(f"Number of results found: {len(search_results)}")
+            for i, result in enumerate(search_results[:3]):
+                print(f"\nRESULT {i+1}:")
+                print(f"  Source: {result.get('source', 'unknown')}")
+                print(f"  Filename: {result.get('filename', 'unknown')}")
+                print(f"  Doc ID: {result.get('doc_id', 'unknown')}")
+                print(f"  Similarity: {result.get('similarity_score', 'unknown')}")
+                content_preview = result.get('content', '')[:300]
+                print(f"  Content preview: {content_preview}...")
+            print(f"{'='*80}")
 
             if not search_results:
                 total_docs = len(self.processed_documents)
@@ -372,31 +389,65 @@ I couldn't find information related to your question in the {total_docs} documen
 
             # Compile context from search results
             context_parts = []
+            has_direct_pdf_result = any(result.get('source') == 'direct_pdf' for result in search_results)
+
             for i, result in enumerate(search_results[:5]):  # Use top 5 results
                 context_parts.append(f"**Source {i+1}** (from {result['filename']}):")
-                context_parts.append(result['content'][:500] + "..." if len(result['content']) > 500 else result['content'])
+
+                # For direct PDF results, use FULL content. For others, truncate to avoid overwhelming context
+                if result.get('source') == 'direct_pdf':
+                    logger.info(f"🔥 Using FULL content from direct PDF processing ({len(result['content'])} characters)")
+                    context_parts.append(result['content'])  # Use full content for direct PDF
+                else:
+                    # Truncate other sources to 500 chars
+                    context_parts.append(result['content'][:500] + "..." if len(result['content']) > 500 else result['content'])
+
                 context_parts.append("")
 
             context_text = "\n".join(context_parts)
 
             # Create Nova Lite prompt for intelligent response
-            nova_prompt = f"""You are a medical AI assistant analyzing patient documents. Based on the search results below, provide a comprehensive and accurate answer to the user's question.
+            if has_direct_pdf_result:
+                # Enhanced prompt for direct PDF processing with full document context
+                nova_prompt = f"""You are analyzing a complete medical document to answer a question. You have access to the FULL document content.
 
 USER QUESTION: {question}
 
-RELEVANT MEDICAL DOCUMENT SECTIONS:
+COMPLETE MEDICAL DOCUMENT CONTENT:
 {context_text}
 
-Please provide:
-1. **Direct Answer**: Answer the user's question clearly and accurately
-2. **Key Findings**: Highlight the most important medical information found
-3. **Medical Context**: Provide relevant medical context and explanations
-4. **Safety Notes**: Include any safety considerations or warnings if applicable
+INSTRUCTIONS:
+1. Answer ONLY the specific question asked - do not provide extra information
+2. Focus on the exact information requested in the question
+3. Quote specific details, names, values, dates that directly answer the question
+4. Be concise and direct - avoid unnecessary background information
+5. If the question asks for one thing, provide only that thing
+6. IMPORTANT: Use plain text formatting only - no markdown symbols like *, #, or other special characters
+7. Use simple formatting like dashes, colons, and line breaks for clarity
 
-Format your response professionally and cite specific information from the sources when possible."""
+Provide a focused answer that directly addresses only what was asked, using the document content."""
+            else:
+                # Standard prompt for other search results
+                nova_prompt = f"""You are analyzing specific medical document content to answer a question. Focus ONLY on what is actually written in the provided document sections.
 
-            # Get Nova Lite response
-            ai_response = self.aws_utils.safe_bedrock_call(nova_prompt, max_tokens=600)
+USER QUESTION: {question}
+
+ACTUAL DOCUMENT CONTENT:
+{context_text}
+
+INSTRUCTIONS:
+1. **Answer based ONLY on the actual document content provided above**
+2. **Quote specific information, names, values, and details from the documents**
+3. **If the answer isn't in the document content, say so clearly**
+4. **Be specific - mention actual patient names, test results, medications, dates if present**
+5. **Do NOT provide general medical advice - only analyze what's in these documents**
+
+Provide a direct answer that references the specific information found in the document content."""
+
+            # Get Nova Lite response (use more tokens for comprehensive direct PDF analysis)
+            max_tokens = 1500 if has_direct_pdf_result else 600
+            logger.info(f"🤖 Using {max_tokens} max tokens for {'comprehensive direct PDF' if has_direct_pdf_result else 'standard'} response")
+            ai_response = self.aws_utils.safe_bedrock_call(nova_prompt, max_tokens=max_tokens)
 
             # Compile final response
             response_parts = []
@@ -441,7 +492,12 @@ Format your response professionally and cite specific information from the sourc
         response_parts.append("")
         
         for i, result in enumerate(search_results[:3]):  # Top 3 results
-            relevance = f"{result['similarity_score']:.1%}"
+            # Handle both numeric and string similarity scores
+            sim_score = result['similarity_score']
+            if isinstance(sim_score, str):
+                relevance = sim_score
+            else:
+                relevance = f"{sim_score:.1%}"
             filename = result['filename']
             content_preview = result['content'][:200]
             
@@ -471,7 +527,6 @@ Format your response professionally and cite specific information from the sourc
             status_parts.append("## 📊 SESSION STATISTICS")
             status_parts.append(f"• **Documents Processed:** {self.session_stats['documents_processed']}")
             status_parts.append(f"• **Queries Answered:** {self.session_stats['queries_answered']}")
-            status_parts.append(f"• **Safety Alerts Generated:** {self.session_stats['safety_alerts_generated']}")
             status_parts.append(f"• **Session Duration:** {self._calculate_session_duration()}")
             status_parts.append("")
             
@@ -976,7 +1031,7 @@ def main():
         demo.launch(
             share=True,              # Create shareable public URL for demo
             server_name="0.0.0.0",   # Allow external access
-            server_port=7862,        # Alternative port
+            server_port=7863,        # Alternative port
             show_error=True,         # Show detailed errors
             favicon_path=None,       # Custom favicon (optional)
             ssl_verify=False         # For development

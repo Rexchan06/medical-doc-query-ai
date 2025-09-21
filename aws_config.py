@@ -30,10 +30,10 @@ from botocore.exceptions import ClientError, NoCredentialsError
 try:
     from dotenv import load_dotenv
     load_dotenv()
-    print("✅ .env file loaded successfully")
+    print("[SUCCESS] .env file loaded successfully")
 except ImportError:
-    print("⚠️ python-dotenv not installed. Install with: pip install python-dotenv")
-    print("📝 Alternatively, set environment variables manually")
+    print("[WARNING] python-dotenv not installed. Install with: pip install python-dotenv")
+    print("[NOTE] Alternatively, set environment variables manually")
 
 # Configure logging
 logging.basicConfig(
@@ -155,7 +155,7 @@ class AWSConfigManager:
         return {
             'total_estimated_cost': round(self.cost_tracker['estimated_cost'], 4),
             'remaining_budget': round(100 - self.cost_tracker['estimated_cost'], 2),
-            'services_used': ['bedrock-nova-lite', 'kendra', 's3'],
+            'services_used': ['bedrock-nova-lite', 'kendra', 's3', 'textract'],
             'timestamp': datetime.now().isoformat()
         }
     
@@ -215,9 +215,17 @@ class AWSUtilities:
                 inferenceConfig={'temperature': 0.1, 'maxTokens': max_tokens}
             )
 
-            # Parse response from converse API
-            answer = response['output']['message']['content'][0]['text']
+            # Safely parse the response using .get()
+            output = response.get('output', {})
+            message = output.get('message', {})
+            content = message.get('content', [])
 
+            # Check if content is not empty before accessing
+            if content and isinstance(content[0], dict):
+                answer = content[0].get('text', 'No valid text response found.')
+            else:
+                answer = 'No valid response format from Bedrock.'
+                
             # Track costs (approximate)
             estimated_tokens = len(prompt.split()) + len(answer.split())
             self.aws_config.track_cost('bedrock', '1k_tokens', max(1, estimated_tokens // 1000))
@@ -295,6 +303,34 @@ class AWSUtilities:
         except Exception as e:
             self.logger.error(f"❌ Kendra index creation failed: {e}")
             return {'error': str(e), 'success': False}
+
+    def safe_textract_call(self, image_bytes: bytes) -> str:
+        """
+        Extract text from image using Amazon Textract
+        FAST implementation for medical documents
+        """
+        try:
+            textract_client = self.aws_config.get_service_client('textract')
+
+            response = textract_client.detect_document_text(
+                Document={'Bytes': image_bytes}
+            )
+
+            # Extract all text blocks
+            extracted_text = ""
+            for block in response.get('Blocks', []):
+                if block['BlockType'] == 'LINE':
+                    extracted_text += block['Text'] + "\n"
+
+            # Track costs
+            self.aws_config.track_cost('textract', 'page', 1)
+
+            self.logger.info(f"✅ Textract successful: {len(extracted_text)} characters")
+            return extracted_text
+
+        except Exception as e:
+            self.logger.error(f"❌ Textract failed: {e}")
+            return f"Error: {str(e)}"
     
     def safe_kendra_batch_put_document(self, index_id: str, documents: List[Dict]) -> Dict:
         """
@@ -318,6 +354,34 @@ class AWSUtilities:
         except Exception as e:
             self.logger.error(f"❌ Kendra document upload failed: {e}")
             return {'error': str(e), 'success': False}
+
+    def safe_textract_call(self, image_bytes: bytes) -> str:
+        """
+        Extract text from image using Amazon Textract
+        FAST implementation for medical documents
+        """
+        try:
+            textract_client = self.aws_config.get_service_client('textract')
+
+            response = textract_client.detect_document_text(
+                Document={'Bytes': image_bytes}
+            )
+
+            # Extract all text blocks
+            extracted_text = ""
+            for block in response.get('Blocks', []):
+                if block['BlockType'] == 'LINE':
+                    extracted_text += block['Text'] + "\n"
+
+            # Track costs
+            self.aws_config.track_cost('textract', 'page', 1)
+
+            self.logger.info(f"✅ Textract successful: {len(extracted_text)} characters")
+            return extracted_text
+
+        except Exception as e:
+            self.logger.error(f"❌ Textract failed: {e}")
+            return f"Error: {str(e)}"
     
     def safe_kendra_query(self, index_id: str, query_text: str, k: int = 10, 
                          attribute_filter: Dict = None) -> Dict:
@@ -348,6 +412,145 @@ class AWSUtilities:
         except Exception as e:
             self.logger.error(f"❌ Kendra query failed: {e}")
             return {'error': str(e), 'success': False}
+
+    def safe_textract_call(self, image_bytes: bytes) -> str:
+        """
+        Extract text from image using Amazon Textract
+        FAST implementation for medical documents
+        """
+        try:
+            textract_client = self.aws_config.get_service_client('textract')
+
+            response = textract_client.detect_document_text(
+                Document={'Bytes': image_bytes}
+            )
+
+            # Extract all text blocks
+            extracted_text = ""
+            for block in response.get('Blocks', []):
+                if block['BlockType'] == 'LINE':
+                    extracted_text += block['Text'] + "\n"
+
+            # Track costs
+            self.aws_config.track_cost('textract', 'page', 1)
+
+            self.logger.info(f"✅ Textract successful: {len(extracted_text)} characters")
+            return extracted_text
+
+        except Exception as e:
+            self.logger.error(f"❌ Textract failed: {e}")
+            return f"Error: {str(e)}"
+
+    def safe_kendra_delete_document(self, index_id: str, document_id: str) -> Dict:
+        """
+        Delete a specific document from Kendra index
+        """
+        try:
+            kendra_client = self.aws_config.get_service_client('kendra')
+
+            response = kendra_client.batch_delete_document(
+                IndexId=index_id,
+                DocumentIdList=[document_id]
+            )
+
+            self.logger.info(f"✅ Kendra document deletion successful: {document_id}")
+            return {'success': True, 'response': response}
+
+        except Exception as e:
+            self.logger.error(f"❌ Kendra document deletion failed: {e}")
+            return {'error': str(e), 'success': False}
+
+    def safe_textract_call(self, image_bytes: bytes) -> str:
+        """
+        Extract text from image using Amazon Textract
+        FAST implementation for medical documents
+        """
+        try:
+            textract_client = self.aws_config.get_service_client('textract')
+
+            response = textract_client.detect_document_text(
+                Document={'Bytes': image_bytes}
+            )
+
+            # Extract all text blocks
+            extracted_text = ""
+            for block in response.get('Blocks', []):
+                if block['BlockType'] == 'LINE':
+                    extracted_text += block['Text'] + "\n"
+
+            # Track costs
+            self.aws_config.track_cost('textract', 'page', 1)
+
+            self.logger.info(f"✅ Textract successful: {len(extracted_text)} characters")
+            return extracted_text
+
+        except Exception as e:
+            self.logger.error(f"❌ Textract failed: {e}")
+            return f"Error: {str(e)}"
+
+    def safe_kendra_list_documents(self, index_id: str) -> Dict:
+        """
+        List documents in Kendra index using query
+        """
+        try:
+            kendra_client = self.aws_config.get_service_client('kendra')
+
+            # Use several broad queries to find all documents
+            queries = ["test", "document", "patient", "medical", "data"]
+            all_documents = []
+            seen_doc_ids = set()
+
+            for query_text in queries:
+                response = kendra_client.query(
+                    IndexId=index_id,
+                    QueryText=query_text,
+                    PageSize=50
+                )
+
+                for item in response.get('ResultItems', []):
+                    doc_id = item.get('DocumentId', '')
+                    if doc_id and doc_id not in seen_doc_ids:
+                        seen_doc_ids.add(doc_id)
+                        all_documents.append({
+                            'document_id': doc_id,
+                            'title': item.get('DocumentTitle', ''),
+                            'excerpt': item.get('DocumentExcerpt', {}).get('Text', '')[:100]
+                        })
+
+            self.logger.info(f"✅ Listed {len(all_documents)} unique documents from Kendra index")
+            return {'success': True, 'documents': all_documents}
+
+        except Exception as e:
+            self.logger.error(f"❌ Kendra document listing failed: {e}")
+            return {'error': str(e), 'success': False}
+
+    def safe_textract_call(self, image_bytes: bytes) -> str:
+        """
+        Extract text from image using Amazon Textract
+        FAST implementation for medical documents
+        """
+        try:
+            textract_client = self.aws_config.get_service_client('textract')
+
+            response = textract_client.detect_document_text(
+                Document={'Bytes': image_bytes}
+            )
+
+            # Extract all text blocks
+            extracted_text = ""
+            for block in response.get('Blocks', []):
+                if block['BlockType'] == 'LINE':
+                    extracted_text += block['Text'] + "\n"
+
+            # Track costs
+            self.aws_config.track_cost('textract', 'page', 1)
+
+            self.logger.info(f"✅ Textract successful: {len(extracted_text)} characters")
+            return extracted_text
+
+        except Exception as e:
+            self.logger.error(f"❌ Textract failed: {e}")
+            return f"Error: {str(e)}"
 
 def setup_aws_environment() -> tuple[AWSConfigManager, AWSUtilities]:
     """

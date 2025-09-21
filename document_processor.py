@@ -54,11 +54,6 @@ class MedicalDocumentProcessor:
         
         self.processed_documents = {}
         
-        self.drug_interactions = {
-            ('warfarin', 'aspirin'): {'severity': 'HIGH', 'risk': 'Increased bleeding risk'},
-            # ... (rest of the interactions)
-        }
-        
         logger.info("✅ Medical Document Processor ready!")
     
     def process_document_complete(self, pdf_path: str) -> Dict:
@@ -132,59 +127,121 @@ class MedicalDocumentProcessor:
     # ... (the rest of the methods remain the same)
     def extract_text_from_pdf(self, pdf_path: str) -> Tuple[str, Dict]:
         """
-        Extract text and analyze content using Nova Lite vision and text capabilities
-        Simplified approach using Nova Lite for both text extraction and visual analysis
+        Extract text using pdfplumber (reliable, no content filters)
+        Fallback to basic PDF text extraction if needed
         """
-        logger.info(f"📄 Processing PDF with Nova Lite: {Path(pdf_path).name}")
+        logger.info(f"📄 Processing PDF with pdfplumber: {Path(pdf_path).name}")
 
         try:
-            # Import pdf2image for conversion
-            from pdf2image import convert_from_path
-            from PIL import Image
-            import base64
-            import io
+            # Try pdfplumber first (most reliable)
+            try:
+                import pdfplumber
 
-            # Convert PDF to images
-            logger.info("Converting PDF pages to images...")
-            images = convert_from_path(pdf_path, dpi=150, fmt='RGB')
+                all_extracted_text = ""
+                pages_processed = 0
 
-            all_extracted_text = ""
-            pages_processed = 0
+                print(f"\n{'='*60}")
+                print(f"DEBUG: PDFPLUMBER EXTRACTION")
+                print(f"{'='*60}")
 
-            # Process each page with Nova Lite
-            for i, image in enumerate(images[:5]):  # Limit to 5 pages for hackathon
-                page_num = i + 1
-                logger.info(f"Processing page {page_num} with Nova Lite...")
+                with pdfplumber.open(pdf_path) as pdf:
+                    total_pages = len(pdf.pages)
+                    print(f"Total pages in PDF: {total_pages}")
 
-                # Convert image to base64 for Nova Lite
-                buffer = io.BytesIO()
-                image.save(buffer, format='PNG', quality=95)
-                img_bytes = buffer.getvalue()
-                image_b64 = base64.b64encode(img_bytes).decode('utf-8')
+                    # Process up to 10 pages for hackathon
+                    for page_num in range(min(10, total_pages)):
+                        page = pdf.pages[page_num]
+                        page_text = page.extract_text()
 
-                # Create comprehensive prompt for Nova Lite
-                prompt = f"""Analyze this page {page_num} of a medical document. Extract ALL text content and describe any visual elements:
+                        if page_text and page_text.strip():
+                            print(f"PAGE {page_num + 1}: {len(page_text)} characters extracted")
+                            print(f"  First 200 chars: {page_text[:200]}...")
 
-1. **Text Extraction**: Extract all readable text exactly as it appears, maintaining structure and formatting
-2. **Medical Data**: Identify and extract all medical information including:
-   - Patient information and demographics
-   - Medications, dosages, and frequencies
-   - Medical conditions and diagnoses
-   - Lab results and vital signs with values and units
-   - Treatment plans and recommendations
-3. **Visual Elements**: Describe any charts, graphs, tables, or medical images
-4. **Clinical Values**: Extract all numerical values with their units and context
+                            all_extracted_text += f"\n\n=== PAGE {page_num + 1} ===\n{page_text}\n"
+                            pages_processed += 1
+                        else:
+                            print(f"PAGE {page_num + 1}: No text extracted (might be image-based)")
 
-Provide a comprehensive analysis that captures both text content and visual information."""
+                print(f"{'='*60}")
 
-                # Call Nova Lite vision API
-                page_analysis = self.aws_utils.safe_bedrock_vision_call(image_b64, prompt)
+                if pages_processed > 0:
+                    print(f"\n{'='*80}")
+                    print(f"DEBUG: PDFPLUMBER FINAL SUMMARY")
+                    print(f"{'='*80}")
+                    print(f"Total characters extracted: {len(all_extracted_text)}")
+                    print(f"Word count estimate: {len(all_extracted_text.split())}")
+                    print(f"Pages processed: {pages_processed}")
+                    print(f"Characters per page average: {len(all_extracted_text) / pages_processed if pages_processed > 0 else 0:.0f}")
+                    print(f"\nFIRST 1000 CHARACTERS:")
+                    print("-" * 50)
+                    print(all_extracted_text[:1000])
+                    print("-" * 50)
+                    print(f"{'='*80}")
 
-                if not page_analysis.startswith("Error:"):
-                    all_extracted_text += f"\n\n=== PAGE {page_num} ===\n{page_analysis}\n"
-                    pages_processed += 1
-                else:
-                    logger.warning(f"⚠️ Nova Lite analysis failed for page {page_num}: {page_analysis}")
+                    # Document metadata
+                    metadata = {
+                        'filename': Path(pdf_path).name,
+                        'pages_processed': pages_processed,
+                        'total_pages': total_pages,
+                        'text_length': len(all_extracted_text),
+                        'extraction_method': 'pdfplumber',
+                        'processing_time': datetime.now().isoformat()
+                    }
+
+                    logger.info(f"✅ pdfplumber extraction successful: {len(all_extracted_text)} characters from {pages_processed} pages")
+                    return all_extracted_text, metadata
+
+            except ImportError:
+                logger.warning("⚠️ pdfplumber not installed, trying PyPDF2...")
+
+            # Fallback to PyPDF2
+            try:
+                import PyPDF2
+
+                all_extracted_text = ""
+                pages_processed = 0
+
+                print(f"\n{'='*60}")
+                print(f"DEBUG: PyPDF2 EXTRACTION")
+                print(f"{'='*60}")
+
+                with open(pdf_path, 'rb') as file:
+                    pdf_reader = PyPDF2.PdfReader(file)
+                    total_pages = len(pdf_reader.pages)
+                    print(f"Total pages in PDF: {total_pages}")
+
+                    # Process up to 10 pages
+                    for page_num in range(min(10, total_pages)):
+                        page = pdf_reader.pages[page_num]
+                        page_text = page.extract_text()
+
+                        if page_text and page_text.strip():
+                            print(f"PAGE {page_num + 1}: {len(page_text)} characters extracted")
+                            print(f"  First 200 chars: {page_text[:200]}...")
+
+                            all_extracted_text += f"\n\n=== PAGE {page_num + 1} ===\n{page_text}\n"
+                            pages_processed += 1
+                        else:
+                            print(f"PAGE {page_num + 1}: No text extracted")
+
+                print(f"{'='*60}")
+
+                if pages_processed > 0:
+                    metadata = {
+                        'filename': Path(pdf_path).name,
+                        'pages_processed': pages_processed,
+                        'total_pages': total_pages,
+                        'text_length': len(all_extracted_text),
+                        'extraction_method': 'pypdf2',
+                        'processing_time': datetime.now().isoformat()
+                    }
+
+                    logger.info(f"✅ PyPDF2 extraction successful: {len(all_extracted_text)} characters from {pages_processed} pages")
+                    return all_extracted_text, metadata
+
+            except ImportError:
+                logger.error("❌ No PDF extraction libraries available (pdfplumber, PyPDF2)")
+                return "", {'error': 'No PDF extraction libraries available'}
 
             # Document metadata
             metadata = {
@@ -195,6 +252,23 @@ Provide a comprehensive analysis that captures both text content and visual info
                 'extraction_method': 'nova_lite_vision',
                 'processing_time': datetime.now().isoformat()
             }
+
+            # DEBUG: Show final extracted text summary
+            print(f"\n{'='*80}")
+            print(f"DEBUG: FINAL EXTRACTION SUMMARY")
+            print(f"{'='*80}")
+            print(f"Total characters extracted: {len(all_extracted_text)}")
+            print(f"Word count estimate: {len(all_extracted_text.split())}")
+            print(f"Pages processed: {pages_processed}")
+            print(f"Characters per page average: {len(all_extracted_text) / pages_processed if pages_processed > 0 else 0:.0f}")
+            print(f"\nFIRST 1000 CHARACTERS OF COMBINED TEXT:")
+            print("-" * 50)
+            print(all_extracted_text[:1000])
+            print("-" * 50)
+            print(f"\nLAST 1000 CHARACTERS OF COMBINED TEXT:")
+            print("-" * 50)
+            print(all_extracted_text[-1000:])
+            print(f"{'='*80}")
 
             logger.info(f"✅ Nova Lite extraction successful: {len(all_extracted_text)} characters from {pages_processed} pages")
 
@@ -408,38 +482,38 @@ Format your response as a structured list under each category."""
         report_sections.append("")
         # ... (rest of the report generation)
 
-def test_document_processor():
-    """
-    Test function for document processor
-    """
-    print("🧪 Testing Medical Document Processor...")
+# def test_document_processor():
+#     """
+#     Test function for document processor
+#     """
+#     print("🧪 Testing Medical Document Processor...")
     
-    try:
-        processor = MedicalDocumentProcessor()
+#     try:
+#         processor = MedicalDocumentProcessor()
         
-        # Create a dummy PDF for testing
-        dummy_pdf_path = "test.pdf"
-        with open(dummy_pdf_path, "w") as f:
-            f.write("Patient has diabetes and takes metformin 500mg twice daily")
+#         # Create a dummy PDF for testing
+#         dummy_pdf_path = "dummy_document.pdf"
+#         with open(dummy_pdf_path, "w") as f:
+#             f.write("Patient has diabetes and takes metformin 500mg twice daily")
 
-        # Test complete processing
-        result = processor.process_document_complete(dummy_pdf_path)
-        print(f"✅ Complete processing test: {'Success' if result['success'] else 'Failed'}")
+#         # Test complete processing
+#         result = processor.process_document_complete(dummy_pdf_path)
+#         print(f"✅ Complete processing test: {'Success' if result['success'] else 'Failed'}")
         
-        os.remove(dummy_pdf_path)
+#         os.remove(dummy_pdf_path)
 
-        print("🎉 Document processor test PASSED!")
-        return True
+#         print("🎉 Document processor test PASSED!")
+#         return True
         
-    except Exception as e:
-        print(f"❌ Document processor test FAILED: {e}")
-        return False
+#     except Exception as e:
+#         print(f"❌ Document processor test FAILED: {e}")
+#         return False
 
-if __name__ == "__main__":
-    print("🚀 Medical Document Processor - Person 2")
-    print("=" * 50)
+# if __name__ == "__main__":
+#     print("🚀 Medical Document Processor - Person 2")
+#     print("=" * 50)
     
-    if test_document_processor():
-        print("\n✅ Document processor ready!")
-    else:
-        print("\n❌ Document processor needs troubleshooting")
+#     if test_document_processor():
+#         print("\n✅ Document processor ready!")
+#     else:
+#         print("\n❌ Document processor needs troubleshooting")

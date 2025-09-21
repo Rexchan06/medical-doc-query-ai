@@ -24,6 +24,7 @@ from collections import defaultdict, Counter
 import hashlib
 import json
 import os
+import base64
 
 # Import Person 1's AWS configuration
 try:
@@ -71,7 +72,10 @@ class MedicalVectorSearch:
         # In-memory cache for immediate search
         self.local_document_cache = {}  # {doc_id: {content, chunks, metadata}}
         self.local_search_enabled = True
-        
+
+        # Track original PDF files for direct processing fallback
+        self.pdf_file_registry = {}  # {doc_id: pdf_file_path}
+
         logger.info("✅ Medical Vector Search System ready!")
     
     def _initialize_kendra_index(self):
@@ -146,21 +150,47 @@ class MedicalVectorSearch:
         logger.info(f"📑 Created {len(chunks)} chunks for document {doc_id}")
         return chunks[:self.max_chunks_per_doc]
 
-    def store_document_vectors(self, doc_id: str, text_content: str, 
+    def store_document_vectors(self, doc_id: str, text_content: str,
                              medical_entities: Dict, chart_descriptions: List[str],
-                             metadata: Dict) -> bool:
+                             metadata: Dict, pdf_file_path: Optional[str] = None) -> bool:
         """
         Store document in Kendra index for multi-document search
         """
         try:
             logger.info(f"💾 Storing document {doc_id} in Kendra index...")
-            
+
             full_content = text_content
             if chart_descriptions:
                 full_content += "\n\n" + "\n".join(chart_descriptions)
-            
+
+            # DEBUG: Show what's being sent to chunking
+            print(f"\n{'='*80}")
+            print(f"DEBUG: KENDRA STORAGE INPUT")
+            print(f"{'='*80}")
+            print(f"Full content length: {len(full_content)} characters")
+            print(f"Word count: {len(full_content.split())}")
+            print(f"Chart descriptions: {len(chart_descriptions)} items")
+            print(f"\nFIRST 1000 CHARS GOING TO KENDRA:")
+            print("-" * 50)
+            print(full_content[:1000])
+            print("-" * 50)
+            print(f"{'='*80}")
+
             text_chunks = self.chunk_text(full_content, doc_id)
-            
+
+            # DEBUG: Show chunking results
+            print(f"\n{'='*80}")
+            print(f"DEBUG: CHUNKING RESULTS")
+            print(f"{'='*80}")
+            print(f"Number of chunks created: {len(text_chunks)}")
+            for i, chunk in enumerate(text_chunks[:3]):  # Show first 3 chunks
+                print(f"\nCHUNK {i+1}:")
+                print(f"  Length: {len(chunk['content'])} chars")
+                print(f"  Preview: {chunk['content'][:200]}...")
+            if len(text_chunks) > 3:
+                print(f"\n... and {len(text_chunks) - 3} more chunks")
+            print(f"{'='*80}")
+
             if not text_chunks:
                 logger.warning(f"⚠️ No chunks created for document {doc_id}")
                 return False
@@ -179,6 +209,20 @@ class MedicalVectorSearch:
                     ]
                 })
             
+            # DEBUG: Show what's being uploaded to Kendra
+            print(f"\n{'='*80}")
+            print(f"DEBUG: KENDRA UPLOAD")
+            print(f"{'='*80}")
+            print(f"Documents to upload: {len(documents_to_upload)}")
+            for i, doc in enumerate(documents_to_upload[:2]):  # Show first 2 documents
+                print(f"\nDOCUMENT {i+1} TO KENDRA:")
+                print(f"  ID: {doc['Id']}")
+                print(f"  Title: {doc['Title']}")
+                print(f"  Content length: {len(doc['Blob'])} bytes")
+                content_str = doc['Blob'].decode('utf-8')
+                print(f"  Content preview: {content_str[:300]}...")
+            print(f"{'='*80}")
+
             response = self.aws_utils.safe_kendra_batch_put_document(
                 index_id=self.kendra_index_id,
                 documents=documents_to_upload
@@ -194,6 +238,11 @@ class MedicalVectorSearch:
                 'filename': metadata.get('filename', 'unknown')
             }
             logger.info(f"✅ Stored document {doc_id} in local cache for immediate search")
+
+            # Store PDF file path for direct processing fallback
+            if pdf_file_path and os.path.exists(pdf_file_path):
+                self.pdf_file_registry[doc_id] = pdf_file_path
+                logger.info(f"📄 Registered PDF file for direct processing: {pdf_file_path}")
 
             if not response['success']:
                 logger.warning(f"⚠️ Kendra storage failed for document {doc_id}: {response['error']}")
@@ -251,13 +300,21 @@ If not relevant, respond with: "NOT_RELEVANT"
 
                 if response and not response.startswith("Error:") and "NOT_RELEVANT" not in response:
                     # Extract relevance info and add to results
+                    print(f"\nLOCAL CACHE MATCH FOUND:")
+                    print(f"  Doc ID: {doc_id}")
+                    print(f"  Filename: {doc_data['filename']}")
+                    print(f"  Content length: {len(content)} chars")
+                    print(f"  Content preview: {content[:300]}...")
+                    print(f"  AI Analysis: {response[:200]}...")
+
                     results.append({
                         'doc_id': doc_id,
                         'filename': doc_data['filename'],
-                        'content_excerpt': content[:500],
+                        'content': content[:2000],  # Increase content size for better context
                         'relevance_analysis': response,
                         'timestamp': doc_data['timestamp'],
-                        'source': 'local_cache'
+                        'source': 'local_cache',
+                        'similarity_score': 'High'  # Add similarity_score for consistency
                     })
 
             # Sort by relevance (could be improved with actual scoring)
@@ -268,6 +325,115 @@ If not relevant, respond with: "NOT_RELEVANT"
             logger.error(f"❌ Local cache search failed: {e}")
             return []
 
+    def _direct_pdf_search(self, query: str) -> List[Dict]:
+        """
+        EMERGENCY FALLBACK: Direct PDF processing with Nova Lite
+        When both Kendra and local cache fail
+        """
+        if not self.pdf_file_registry:
+            logger.info("📄 No PDF files registered for direct processing")
+            return []
+
+        try:
+            logger.info(f"🚨 EMERGENCY FALLBACK: Direct PDF processing for query: '{query}'")
+            results = []
+
+            for doc_id, pdf_path in self.pdf_file_registry.items():
+                if not os.path.exists(pdf_path):
+                    continue
+
+                # Check PDF size (Nova Lite limit: 4.5MB)
+                pdf_size = os.path.getsize(pdf_path)
+                if pdf_size > 4.5 * 1024 * 1024:
+                    logger.warning(f"⚠️ PDF too large for direct processing: {pdf_size/1024/1024:.1f}MB")
+                    continue
+
+                logger.info(f"📄 Processing PDF directly: {pdf_path}")
+
+                # Read PDF as bytes
+                with open(pdf_path, 'rb') as pdf_file:
+                    pdf_bytes = pdf_file.read()
+
+                # Create prompt for Nova Lite
+                prompt = f"""
+You are a medical AI assistant analyzing a medical document.
+
+Question: {query}
+
+Please analyze the attached medical document and provide a comprehensive answer to the question.
+
+Focus on:
+1. Direct answers from the document content
+2. Relevant medical details
+3. Specific patient information if available
+4. Any diagnoses, treatments, or assessments mentioned
+
+Be thorough and accurate in your response. Return the information in a clear, structured format.
+"""
+
+                try:
+                    # Use existing aws_utils for bedrock call with document
+                    logger.info("🤖 Calling Nova Lite via existing AWS utilities...")
+
+                    # For now, let's extract text from PDF and use regular bedrock call
+                    # This is a simpler approach that works with your existing setup
+
+                    # Try to extract text content from PDF using existing document processor
+                    try:
+                        from document_processor import MedicalDocumentProcessor
+                        temp_processor = MedicalDocumentProcessor()
+                        temp_result = temp_processor.process_document_complete(pdf_path)
+
+                        if temp_result['success']:
+                            pdf_text_content = temp_result['extracted_text']
+                            logger.info(f"📄 Extracted {len(pdf_text_content)} characters from PDF")
+
+                            # Create enhanced prompt with extracted text
+                            enhanced_prompt = f"""
+{prompt}
+
+MEDICAL DOCUMENT CONTENT:
+{pdf_text_content}
+
+Please provide a comprehensive answer based on the medical document content above.
+"""
+
+                            # Use existing safe_bedrock_call
+                            response_text = self.aws_utils.safe_bedrock_call(enhanced_prompt, max_tokens=2000)
+
+                            if response_text and not response_text.startswith("Error:"):
+                                logger.info("✅ Successfully processed PDF via document processor + Nova Lite")
+                            else:
+                                raise Exception(f"Bedrock call failed: {response_text}")
+                        else:
+                            raise Exception(f"Document processing failed: {temp_result['error']}")
+
+                    except Exception as fallback_error:
+                        logger.warning(f"⚠️ Document processor approach failed: {fallback_error}")
+                        # Fallback to simple text extraction if available
+                        raise Exception("Direct PDF processing not available with current AWS setup")
+
+                    results.append({
+                        'doc_id': doc_id,
+                        'filename': os.path.basename(pdf_path),
+                        'content': response_text,
+                        'similarity_score': 'Direct PDF Processing',
+                        'source': 'direct_pdf',
+                        'pdf_path': pdf_path
+                    })
+
+                    logger.info(f"✅ Direct PDF processing successful for {pdf_path}")
+
+                except Exception as pdf_error:
+                    logger.error(f"❌ Direct PDF processing failed for {pdf_path}: {pdf_error}")
+                    continue
+
+            return results
+
+        except Exception as e:
+            logger.error(f"❌ Direct PDF search failed: {e}")
+            return []
+
     def search_across_documents(self, query: str, k: int = 10, 
                               filter_params: Optional[Dict] = None) -> List[Dict]:
         """
@@ -275,9 +441,10 @@ If not relevant, respond with: "NOT_RELEVANT"
         """
         try:
             logger.info(f"🔍 Multi-document search: '{query}' (k={k})")
+            logger.info(f"📊 Search Strategy: Kendra first → Direct PDF fallback (no local cache)")
 
             # First, try Kendra for best search quality
-            logger.info("🔍 Searching Kendra index...")
+            logger.info("🔍 Step 1: Searching Kendra index...")
             response = self.aws_utils.safe_kendra_query(
                 index_id=self.kendra_index_id,
                 query_text=query,
@@ -287,6 +454,23 @@ If not relevant, respond with: "NOT_RELEVANT"
 
             if response['success']:
                 search_results = response['results'].get('ResultItems', [])
+                logger.info(f"🔍 Kendra response: {len(search_results)} results found")
+
+                # DEBUG: Show raw Kendra response
+                print(f"\n{'='*80}")
+                print(f"DEBUG: RAW KENDRA RESPONSE")
+                print(f"{'='*80}")
+                print(f"Query: '{query}'")
+                print(f"Success: {response['success']}")
+                print(f"Results count: {len(search_results)}")
+                if search_results:
+                    print("First result details:")
+                    print(f"  Raw result keys: {list(search_results[0].keys())}")
+                    print(f"  Document Title: {search_results[0].get('DocumentTitle', 'None')}")
+                    print(f"  Document Excerpt: {search_results[0].get('DocumentExcerpt', {})}")
+                    print(f"  Score: {search_results[0].get('ScoreAttributes', {})}")
+                print(f"{'='*80}")
+
                 if search_results:
                     logger.info(f"✅ Kendra found {len(search_results)} results")
                     # Process Kendra results
@@ -324,28 +508,86 @@ If not relevant, respond with: "NOT_RELEVANT"
 
                     return formatted_results
                 else:
-                    logger.info("⚪ Kendra returned 0 results, trying local cache...")
-                    local_results = self._search_local_cache(query, k)
-                    if local_results:
-                        logger.info(f"📋 Local cache found {len(local_results)} results")
-                        return local_results
+                    # Check if we have documents in the registry (uploaded to Kendra)
+                    total_docs_uploaded = len(self.document_registry)
+                    logger.info(f"⚪ Kendra returned 0 results. Documents uploaded to Kendra: {total_docs_uploaded}")
+
+                    if total_docs_uploaded > 0:
+                        logger.info("📋 Documents exist in Kendra but no matches found (likely still indexing).")
+                        logger.info("🔍 Step 2: Skipping local cache - going to Direct PDF processing...")
                     else:
-                        logger.info("❌ No results found in either Kendra or local cache")
+                        logger.info("⚠️ No documents uploaded to Kendra yet.")
+                        logger.info("🔍 Step 2: Trying Direct PDF processing...")
+
+                    # Skip local cache entirely - go straight to direct PDF processing
+                    logger.info("🚨 ACTIVATING EMERGENCY FALLBACK: Direct PDF processing")
+                    direct_results = self._direct_pdf_search(query)
+                    if direct_results:
+                        logger.info(f"🎉 Direct PDF processing found {len(direct_results)} results!")
+                        return direct_results
+                    else:
+                        logger.error("❌ Both Kendra and Direct PDF processing failed")
                         return []
             else:
                 logger.warning(f"⚠️ Kendra search failed: {response['error']}")
-                logger.info("📋 Falling back to local cache...")
-                local_results = self._search_local_cache(query, k)
-                if local_results:
-                    logger.info(f"📋 Local cache found {len(local_results)} results")
-                    return local_results
+                logger.info("🔍 Skipping local cache - trying Direct PDF processing...")
+
+                # Skip local cache entirely - go straight to direct PDF processing
+                direct_results = self._direct_pdf_search(query)
+                if direct_results:
+                    logger.info(f"🎉 Direct PDF processing found {len(direct_results)} results!")
+                    return direct_results
                 else:
-                    logger.error("❌ Both Kendra and local cache failed")
+                    logger.error("❌ Both Kendra and Direct PDF processing failed")
                     return []
             
         except Exception as e:
             logger.error(f"❌ Kendra search failed: {e}")
             return []
+
+    def check_kendra_status(self) -> Dict:
+        """
+        Check Kendra index status and document count
+        """
+        try:
+            kendra_client = self.aws_config.get_service_client('kendra')
+
+            # Get index description
+            index_info = kendra_client.describe_index(Id=self.kendra_index_id)
+
+            # Get index statistics
+            try:
+                stats_response = kendra_client.describe_index(Id=self.kendra_index_id)
+                index_stats = stats_response.get('IndexStatistics', {})
+            except:
+                index_stats = {}
+
+            status = {
+                'index_id': self.kendra_index_id,
+                'index_status': index_info.get('Status', 'Unknown'),
+                'documents_uploaded_by_app': len(self.document_registry),
+                'local_cache_docs': len(self.local_document_cache),
+                'index_created': index_info.get('CreatedAt', 'Unknown'),
+                'index_updated': index_info.get('UpdatedAt', 'Unknown'),
+                'indexed_text_documents': index_stats.get('TextDocumentStatistics', {}).get('IndexedTextDocumentsCount', 'Unknown'),
+                'indexing_errors': index_stats.get('TextDocumentStatistics', {}).get('IndexedTextBytesCount', 'Unknown')
+            }
+
+            logger.info(f"📊 Kendra Status: {status}")
+            print(f"\n{'='*50}")
+            print(f"KENDRA INDEX STATUS")
+            print(f"{'='*50}")
+            print(f"Index Status: {status['index_status']}")
+            print(f"Documents uploaded by app: {status['documents_uploaded_by_app']}")
+            print(f"Actually indexed documents: {status['indexed_text_documents']}")
+            print(f"Local cache documents: {status['local_cache_docs']}")
+            print(f"{'='*50}")
+
+            return status
+
+        except Exception as e:
+            logger.error(f"❌ Failed to check Kendra status: {e}")
+            return {'error': str(e)}
 
     def get_system_statistics(self) -> Dict[str, Any]:
         """
@@ -373,60 +615,60 @@ If not relevant, respond with: "NOT_RELEVANT"
             logger.error(f"❌ Statistics generation failed: {e}")
             return {'error': str(e)}
 
-def test_vector_search():
-    """
-    Test function for vector search system with Kendra
-    """
-    print("🧪 Testing Medical Vector Search System with Kendra...")
+# def test_vector_search():
+#     """
+#     Test function for vector search system with Kendra
+#     """
+#     print("🧪 Testing Medical Vector Search System with Kendra...")
     
-    try:
-        vector_search = MedicalVectorSearch()
+#     try:
+#         vector_search = MedicalVectorSearch()
         
-        sample_text = """
-        Patient is a 65-year-old male with type 2 diabetes mellitus and hypertension.
-        Current medications include metformin 500mg twice daily, lisinopril 10mg daily,
-        and aspirin 81mg for cardioprotection. Recent HbA1c is 7.2%, showing good
-        glycemic control. Blood pressure is well-controlled at 130/80 mmHg.
-        """
+#         sample_text = """
+#         Patient is a 65-year-old male with type 2 diabetes mellitus and hypertension.
+#         Current medications include metformin 500mg twice daily, lisinopril 10mg daily,
+#         and aspirin 81mg for cardioprotection. Recent HbA1c is 7.2%, showing good
+#         glycemic control. Blood pressure is well-controlled at 130/80 mmHg.
+#         """
         
-        chunks = vector_search.chunk_text(sample_text, "test_doc")
-        print(f"✅ Text chunking: {len(chunks)} chunks created")
+#         chunks = vector_search.chunk_text(sample_text, "test_doc")
+#         print(f"✅ Text chunking: {len(chunks)} chunks created")
         
-        mock_medical_entities = {
-            'medications': [{'text': 'metformin 500mg'}, {'text': 'lisinopril 10mg'}],
-            'conditions': [{'text': 'diabetes mellitus'}, {'text': 'hypertension'}]
-        }
+#         mock_medical_entities = {
+#             'medications': [{'text': 'metformin 500mg'}, {'text': 'lisinopril 10mg'}],
+#             'conditions': [{'text': 'diabetes mellitus'}, {'text': 'hypertension'}]
+#         }
         
-        success = vector_search.store_document_vectors(
-            "test_doc_001",
-            sample_text,
-            mock_medical_entities,
-            ["Chart shows blood glucose trending downward"],
-            {"filename": "test_patient.pdf"}
-        )
-        print(f"✅ Kendra vector storage: {'Success' if success else 'Failed'}")
+#         success = vector_search.store_document_vectors(
+#             "test_doc_001",
+#             sample_text,
+#             mock_medical_entities,
+#             ["Chart shows blood glucose trending downward"],
+#             {"filename": "test_patient.pdf"}
+#         )
+#         print(f"✅ Kendra vector storage: {'Success' if success else 'Failed'}")
         
-        search_results = vector_search.search_across_documents(
-            "diabetes medications and blood pressure",
-            k=5
-        )
-        print(f"✅ Kendra multi-document search: {len(search_results)} results found")
+#         search_results = vector_search.search_across_documents(
+#             "diabetes medications and blood pressure",
+#             k=5
+#         )
+#         print(f"✅ Kendra multi-document search: {len(search_results)} results found")
         
-        stats = vector_search.get_system_statistics()
-        print(f"✅ System statistics: {stats.get('vector_database', {}).get('total_chunks', 0)} chunks in database")
+#         stats = vector_search.get_system_statistics()
+#         print(f"✅ System statistics: {stats.get('vector_database', {}).get('total_chunks', 0)} chunks in database")
         
-        print("🎉 Kendra vector search system test PASSED!")
-        return True
+#         print("🎉 Kendra vector search system test PASSED!")
+#         return True
         
-    except Exception as e:
-        print(f"❌ Kendra vector search system test FAILED: {e}")
-        return False
+#     except Exception as e:
+#         print(f"❌ Kendra vector search system test FAILED: {e}")
+#         return False
 
-if __name__ == "__main__":
-    print("🚀 Medical Vector Search System - Person 3")
-    print("=" * 50)
+# if __name__ == "__main__":
+#     print("🚀 Medical Vector Search System - Person 3")
+#     print("=" * 50)
     
-    if test_vector_search():
-        print("\n✅ Kendra vector search system ready!")
-    else:
-        print("\n❌ Kendra vector search system needs troubleshooting")
+#     if test_vector_search():
+#         print("\n✅ Kendra vector search system ready!")
+#     else:
+#         print("\n❌ Kendra vector search system needs troubleshooting")

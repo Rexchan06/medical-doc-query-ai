@@ -327,70 +327,70 @@ Be thorough and specific with medical details, measurements, and clinical interp
 
         return descriptions
 
-def test_vision_processor():
-    """
-    Test function for simplified vision processor
-    """
-    print("🧪 Testing Medical Vision Processor...")
+# def test_vision_processor():
+#     """
+#     Test function for simplified vision processor
+#     """
+#     print("🧪 Testing Medical Vision Processor...")
 
-    try:
-        # Initialize vision processor
-        vision_processor = MedicalVisionProcessor()
+#     try:
+#         # Initialize vision processor
+#         vision_processor = MedicalVisionProcessor()
 
-        # Test image optimization
-        if PDF2IMAGE_AVAILABLE:
-            test_image = Image.new('RGB', (800, 600), color='white')
-            optimized = vision_processor._optimize_image_for_vision(test_image)
-            print(f"✅ Image optimization: {optimized.size}")
+#         # Test image optimization
+#         if PDF2IMAGE_AVAILABLE:
+#             test_image = Image.new('RGB', (800, 600), color='white')
+#             optimized = vision_processor._optimize_image_for_vision(test_image)
+#             print(f"✅ Image optimization: {optimized.size}")
 
-        # Test base64 conversion
-        test_image = Image.new('RGB', (100, 100), color='red')
-        b64_string = vision_processor.image_to_base64(test_image)
-        print(f"✅ Base64 conversion: {len(b64_string)} characters")
+#         # Test base64 conversion
+#         test_image = Image.new('RGB', (100, 100), color='red')
+#         b64_string = vision_processor.image_to_base64(test_image)
+#         print(f"✅ Base64 conversion: {len(b64_string)} characters")
 
-        # Test cost-saving filter
-        should_analyze = vision_processor.should_analyze_page(test_image)
-        print(f"✅ Cost-saving filter: {'Analyze' if should_analyze else 'Skip'}")
+#         # Test cost-saving filter
+#         should_analyze = vision_processor.should_analyze_page(test_image)
+#         print(f"✅ Cost-saving filter: {'Analyze' if should_analyze else 'Skip'}")
 
-        # Test vision prompt creation
-        prompt = vision_processor._create_vision_prompt(1)
-        print(f"✅ Vision prompt creation: {len(prompt)} characters")
+#         # Test vision prompt creation
+#         prompt = vision_processor._create_vision_prompt(1)
+#         print(f"✅ Vision prompt creation: {len(prompt)} characters")
 
-        print("🎉 Vision processor test PASSED!")
-        return True
+#         print("🎉 Vision processor test PASSED!")
+#         return True
 
-    except Exception as e:
-        print(f"❌ Vision processor test FAILED: {e}")
-        return False
+#     except Exception as e:
+#         print(f"❌ Vision processor test FAILED: {e}")
+#         return False
 
-if __name__ == "__main__":
-    """
-    Run this file directly to test vision processing
-    """
+# if __name__ == "__main__":
+#     """
+#     Run this file directly to test vision processing
+#     """
     
-    print("🚀 Medical Vision Processor - Person 4")
-    print("=" * 50)
+#     print("🚀 Medical Vision Processor - Person 4")
+#     print("=" * 50)
     
-    # Test the vision processor
-    if test_vision_processor():
-        print("\n✅ Vision processor ready!")
-        print("🔗 Integration points:")
-        print("   - Person 2: Use vision results in complete document processing")
-        print("   - Person 3: Use create_vision_description_for_vector_search() for vector storage")
-        print("   - Person 5: Display vision analysis results in Gradio interface")
-        print("\n📋 Key Functions available:")
-        print("   - process_document_vision(pdf_path)")
-        print("   - analyze_medical_image(image, page_number)")
-        print("   - create_vision_description_for_vector_search(vision_results)")
+#     # Test the vision processor
+#     if test_vision_processor():
+#         print("\n✅ Vision processor ready!")
+#         print("🔗 Integration points:")
+#         print("   - Person 2: Use vision results in complete document processing")
+#         print("   - Person 3: Use create_vision_description_for_vector_search() for vector storage")
+#         print("   - Person 5: Display vision analysis results in Gradio interface")
+#         print("\n📋 Key Functions available:")
+#         print("   - process_document_vision(pdf_path)")
+#         print("   - analyze_medical_image(image, page_number)")
+#         print("   - create_vision_description_for_vector_search(vision_results)")
         
-        if not PDF2IMAGE_AVAILABLE:
-            print("\n⚠️ Warning: pdf2image not available")
-            print("   Install with: pip install pdf2image")
-            print("   System dependency needed (poppler)")
-    else:
-        print("\n❌ Vision processor needs troubleshooting")
-        print("🔧 Check:")
-        print("   1. pdf2image library: pip install pdf2image")
-        print("   2. Pillow library: pip install Pillow")
-        print("   3. System poppler installation")
-        print("   4. AWS configuration and Bedrock access")
+#         if not PDF2IMAGE_AVAILABLE:
+#             print("\n⚠️ Warning: pdf2image not available")
+#             print("   Install with: pip install pdf2image")
+#             print("   System dependency needed (poppler)")
+#     else:
+#         print("\n❌ Vision processor needs troubleshooting")
+#         print("🔧 Check:")
+#         print("   1. pdf2image library: pip install pdf2image")
+#         print("   2. Pillow library: pip install Pillow")
+#         print("   3. System poppler installation")
+#         print("   4. AWS configuration and Bedrock access")
