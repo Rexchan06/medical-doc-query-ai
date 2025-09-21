@@ -115,17 +115,17 @@ class AWSConfigManager:
         # Test Bedrock
         try:
             response = self.services['bedrock'].invoke_model(
-                modelId='anthropic.claude-3-haiku-20240307-v1:0',
+                modelId='amazon.nova-lite-v1:0',
                 body=json.dumps({
-                    'anthropic_version': 'bedrock-2023-05-31',
                     'max_tokens': 10,
-                    'messages': [{'role': 'user', 'content': 'test'}]
+                    'messages': [{'role': 'user', 'content': [{'type': 'text', 'text': 'test'}]}],
+                    'inferenceConfig': {'temperature': 0.1}
                 })
             )
             service_status['bedrock'] = True
-            logger.info("✅ Bedrock connectivity confirmed")
+            logger.info("✅ Bedrock Nova Lite connectivity confirmed")
         except Exception as e:
-            logger.error(f"❌ Bedrock test failed: {e}")
+            logger.error(f"❌ Bedrock Nova Lite test failed: {e}")
             service_status['bedrock'] = False
         
         # Test Comprehend Medical
@@ -263,83 +263,78 @@ class AWSUtilities:
         """
         try:
             bedrock_client = self.aws_config.get_service_client('bedrock')
-            
+
             if model_id is None:
-                model_id = 'anthropic.claude-3-haiku-20240307-v1:0'
-            
-            # Prepare request
+                model_id = 'amazon.nova-lite-v1:0'
+
+            # Prepare request for Nova Lite format
             request_body = {
-                'anthropic_version': 'bedrock-2023-05-31',
                 'max_tokens': max_tokens,
-                'temperature': 0.1,
-                'messages': [{'role': 'user', 'content': prompt}]
+                'messages': [{'role': 'user', 'content': [{'type': 'text', 'text': prompt}]}],
+                'inferenceConfig': {'temperature': 0.1}
             }
-            
+
             # Make API call
             response = bedrock_client.invoke_model(
                 modelId=model_id,
                 body=json.dumps(request_body)
             )
-            
+
             # Parse response
             result = json.loads(response['body'].read())
-            answer = result['content'][0]['text']
-            
+            answer = result['output']['message']['content'][0]['text']
+
             # Track costs (approximate)
             estimated_tokens = len(prompt.split()) + len(answer.split())
             self.aws_config.track_cost('bedrock', '1k_tokens', max(1, estimated_tokens // 1000))
-            
-            self.logger.info(f"✅ Bedrock call successful: {len(answer)} characters")
+
+            self.logger.info(f"✅ Bedrock Nova Lite call successful: {len(answer)} characters")
             return answer
-            
+
         except Exception as e:
-            self.logger.error(f"❌ Bedrock API call failed: {e}")
+            self.logger.error(f"❌ Bedrock Nova Lite API call failed: {e}")
             return f"Error: {str(e)}"
     
     def safe_bedrock_vision_call(self, image_base64: str, prompt: str) -> str:
         """
-        Safe Bedrock vision API call for image analysis
+        Safe Bedrock vision API call for image analysis using Nova Lite
         For use by Person 4 (Document Processing)
         """
         try:
             bedrock_client = self.aws_config.get_service_client('bedrock')
-            
+
             request_body = {
-                'anthropic_version': 'bedrock-2023-05-31',
                 'max_tokens': 400,
-                'temperature': 0.1,
                 'messages': [{
                     'role': 'user',
                     'content': [
                         {'type': 'text', 'text': prompt},
                         {
                             'type': 'image',
-                            'source': {
-                                'type': 'base64',
-                                'media_type': 'image/png',
-                                'data': image_base64
-                            }
+                            'format': 'png',
+                            'source': {'bytes': image_base64}
                         }
                     ]
-                }]
+                }],
+                'inferenceConfig': {'temperature': 0.1}
             }
-            
+
             response = bedrock_client.invoke_model(
-                modelId='anthropic.claude-3-haiku-20240307-v1:0',
+                modelId='amazon.nova-lite-v1:0',
                 body=json.dumps(request_body)
             )
-            
+
             result = json.loads(response['body'].read())
-            answer = result['content'][0]['text']
-            
+            answer = result['output']['message']['content'][0]['text']
+
             # Track vision costs
             self.aws_config.track_cost('bedrock', 'vision_image', 1)
-            
-            self.logger.info("✅ Bedrock vision call successful")
+
+            self.logger.info("✅ Bedrock Nova Lite vision call successful")
             return answer
-            
+
         except Exception as e:
-            self.logger.error(f"❌ Bedrock vision call failed: {e}")
+            self.logger.error(f"❌ Bedrock Nova Lite vision call failed: {e}")
             return f"Vision analysis failed: {str(e)}"
     
     def safe_comprehend_medical_call(self, text: str) -> Dict:
@@ -478,24 +473,24 @@ def test_aws_setup():
     """
     Test function - run this to verify AWS setup is working
     """
-    print("🧪 Testing AWS setup...")
-    
+    print("Testing AWS setup...")
+
     try:
         aws_config, aws_utils = setup_aws_environment()
-        
+
         # Test basic text analysis
         test_response = aws_utils.safe_bedrock_call("Hello, this is a test medical query about diabetes.")
-        print(f"✅ Bedrock test response: {test_response[:100]}...")
-        
+        print(f"Bedrock test response: {test_response[:100]}...")
+
         # Test cost tracking
         cost_summary = aws_config.get_cost_summary()
-        print(f"✅ Cost tracking working: {cost_summary}")
-        
-        print("🎉 AWS setup test PASSED!")
+        print(f"Cost tracking working: {cost_summary}")
+
+        print("AWS setup test PASSED!")
         return True
-        
+
     except Exception as e:
-        print(f"❌ AWS setup test FAILED: {e}")
+        print(f"AWS setup test FAILED: {e}")
         return False
 
 if __name__ == "__main__":
@@ -503,21 +498,21 @@ if __name__ == "__main__":
     Run this file directly to test AWS setup
     """
     
-    print("🚀 AWS Infrastructure Setup - Person 1")
+    print("AWS Infrastructure Setup - Person 1")
     print("=" * 50)
-    
+
     # Test AWS setup
     if test_aws_setup():
-        print("\n✅ AWS environment ready for team!")
-        print("👥 Share aws_config.py with all team members")
-        print("📋 Next: Person 2 can start Textract integration")
-        print("📋 Next: Person 3 can start vector search setup")
-        print("📋 Next: Person 4 can start document processing")
-        print("📋 Next: Person 5 can start Gradio interface")
+        print("\nAWS environment ready for team!")
+        print("Share aws_config.py with all team members")
+        print("Next: Person 2 can start Textract integration")
+        print("Next: Person 3 can start vector search setup")
+        print("Next: Person 4 can start document processing")
+        print("Next: Person 5 can start Gradio interface")
     else:
-        print("\n❌ AWS setup needs troubleshooting")
-        print("🔧 Check:")
+        print("\nAWS setup needs troubleshooting")
+        print("Check:")
         print("   1. AWS credentials: aws configure")
         print("   2. Internet connection")
         print("   3. AWS service permissions")
-        print("   4. Bedrock model access enabled")
+        print("   4. Bedrock Nova Lite model access enabled")
