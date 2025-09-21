@@ -93,9 +93,6 @@ class MedicalDocumentProcessor:
                     'phi_detected': []
                 }
 
-            # Step 3: Check drug safety (rule-based, still works)
-            safety_alerts = self.check_drug_safety(medical_entities.get('medications', []))
-
             # Step 4: Generate medical report
             medical_report = self.generate_medical_report(
                 extracted_text, medical_entities
@@ -105,8 +102,6 @@ class MedicalDocumentProcessor:
             processing_summary = {
                 'medications_found': len(medical_entities.get('medications', [])),
                 'conditions_found': len(medical_entities.get('conditions', [])),
-                'safety_alerts_count': len(safety_alerts),
-                'has_high_risk_interactions': any(alert['severity'] == 'HIGH' for alert in safety_alerts),
                 'extraction_method': 'nova_lite_combined'
             }
 
@@ -122,7 +117,6 @@ class MedicalDocumentProcessor:
                 'filename': filename,
                 'extracted_text': extracted_text,
                 'medical_entities': medical_entities,
-                'safety_alerts': safety_alerts,
                 'medical_report': medical_report,
                 'extraction_metadata': extraction_metadata,
                 'processing_summary': processing_summary
@@ -371,82 +365,6 @@ Format your response as a structured list under each category."""
                 'phi_detected': []
             }
     
-    def check_drug_safety(self, medications: List[Dict]) -> List[Dict]:
-        """
-        Check for drug interactions and safety alerts
-        Core safety feature that impresses judges
-        """
-        logger.info("🚨 Checking drug interactions...")
-        
-        safety_alerts = []
-        
-        try:
-            # Extract medication names (normalize)
-            med_names = []
-            for med in medications:
-                med_name = med['text'].lower().strip()
-                # Extract base medication name (remove dosage info)
-                med_name = re.split(r'\s+\d+', med_name)[0]  # Remove dosage
-                med_names.append((med_name, med))
-            
-            # Check all combinations for interactions
-            for i, (med1_name, med1_data) in enumerate(med_names):
-                for j, (med2_name, med2_data) in enumerate(med_names):
-                    if i < j:  # Avoid duplicate checks
-                        
-                        # Check both combinations
-                        interaction = None
-                        combo1 = (med1_name, med2_name)
-                        combo2 = (med2_name, med1_name)
-                        
-                        if combo1 in self.drug_interactions:
-                            interaction = self.drug_interactions[combo1]
-                        elif combo2 in self.drug_interactions:
-                            interaction = self.drug_interactions[combo2]
-                        
-                        # Also check partial matches for common drug classes
-                        if not interaction:
-                            interaction = self._check_drug_class_interactions(med1_name, med2_name)
-                        
-                        if interaction:
-                            # Extract dosage information if available
-                            med1_dosage = self._extract_dosage(med1_data)
-                            med2_dosage = self._extract_dosage(med2_data)
-                            
-                            safety_alert = {
-                                'alert_type': 'DRUG_INTERACTION',
-                                'severity': interaction['severity'],
-                                'drug1': {
-                                    'name': med1_data['text'],
-                                    'dosage': med1_dosage,
-                                    'confidence': med1_data['confidence']
-                                },
-                                'drug2': {
-                                    'name': med2_data['text'],
-                                    'dosage': med2_dosage,
-                                    'confidence': med2_data['confidence']
-                                },
-                                'risk_description': interaction['risk'],
-                                'recommended_action': interaction['action'],
-                                'timestamp': datetime.now().isoformat()
-                            }
-                            
-                            safety_alerts.append(safety_alert)
-                            
-                            logger.warning(f"⚠️ {interaction['severity']} interaction detected: "
-                                         f"{med1_data['text']} + {med2_data['text']}")
-            
-            if safety_alerts:
-                logger.warning(f"🚨 {len(safety_alerts)} drug interactions detected!")
-            else:
-                logger.info("✅ No drug interactions detected")
-            
-            return safety_alerts
-            
-        except Exception as e:
-            logger.error(f"❌ Drug safety check failed: {e}")
-            return []
-    
     def _extract_dosage(self, medication_data: Dict) -> str:
         """Extract dosage information from medication entity"""
         try:
@@ -500,7 +418,7 @@ def test_document_processor():
         processor = MedicalDocumentProcessor()
         
         # Create a dummy PDF for testing
-        dummy_pdf_path = "dummy_document.pdf"
+        dummy_pdf_path = "test.pdf"
         with open(dummy_pdf_path, "w") as f:
             f.write("Patient has diabetes and takes metformin 500mg twice daily")
 
